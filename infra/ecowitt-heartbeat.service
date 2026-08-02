@@ -6,10 +6,10 @@ After=postgresql.service
 Type=oneshot
 User=ecowitt
 Environment=DB_NAME=ecowitt
-# Thresholds. MAX_RUN_AGE_MIN should tighten once pull cadence is decided
-# (CLAUDE.md §11) — 120 is deliberately loose so a single missed pull is not
-# an incident.
-Environment=MAX_RUN_AGE_MIN=120
+# Cadence decided 2026-08-02: hourly pulls. Normal max age is ~60 min plus
+# timer jitter, so 150 fires only after roughly two consecutive misses — late
+# enough not to flap on jitter, early enough to matter.
+Environment=MAX_RUN_AGE_MIN=150
 Environment=MAX_BACKUP_AGE_MIN=1560
 ExecStart=/opt/ecowitt/heartbeat.sh
 StandardOutput=journal

@@ -270,7 +270,7 @@ These are deliberately unanswered and must not be guessed:
 
 - [x] Database target — **self-managed Postgres 16 on e2-micro**, us-central1 (2026-08-02)
 - [x] Where the Phase 1 job runs — **on the e2-micro alongside Postgres** (2026-08-02)
-- [ ] Pull cadence
+- [x] Pull cadence — **hourly, 4 h window**; 12 h chunks for reconcile/backfill (2026-08-02)
 - [ ] Whether to bootstrap historical data, accepting mixed resolution
 - [ ] Resample interval and gap-fill policy
 - [ ] Reconciliation window and cadence

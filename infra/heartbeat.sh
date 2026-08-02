@@ -25,10 +25,9 @@ set -uo pipefail
 DB_NAME="${DB_NAME:-ecowitt}"
 LOG_NAME="${LOG_NAME:-ecowitt-heartbeat}"
 
-# Pull cadence is still an open decision (CLAUDE.md §11). Until it is settled,
-# 2h is a deliberately loose threshold: it catches a stopped pipeline without
-# firing on a single missed pull. Tighten it once cadence is chosen.
-MAX_RUN_AGE_MIN="${MAX_RUN_AGE_MIN:-120}"
+# Pull cadence is hourly (CLAUDE.md §11, decided 2026-08-02). Normal max age is
+# ~60 min plus timer jitter, so 150 fires after roughly two consecutive misses.
+MAX_RUN_AGE_MIN="${MAX_RUN_AGE_MIN:-150}"
 MAX_BACKUP_AGE_MIN="${MAX_BACKUP_AGE_MIN:-1560}"   # 26h — one nightly + slack
 MAX_RUNNING_MIN="${MAX_RUNNING_MIN:-60}"           # a run stuck this long crashed
 

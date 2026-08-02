@@ -330,6 +330,12 @@ Consequences:
     claims success at the wrong resolution is indistinguishable from a correct
     one until you measure the deltas.
   - Never infer resolution from the request parameters.
+- ⚠️ **12-hour chunks, not 24, for anything beyond the incremental window.**
+  D2 measured `5min` as honored up to a 24 h span, but the date parameters are
+  read in **console-local** time (§5.0). On the spring-forward DST day a 24 h
+  *absolute* window becomes a **25 h wall-clock span** in `America/Chicago`,
+  which exceeds the limit and silently downgrades to 30-minute data — once a
+  year, with `code=0` and no error. 12 h stays clear in both directions.
 - ⚠️ The **retention** tiers above remain **UNVERIFIED**. The station's history
   begins 2026-08-01, so every retention probe returned empty for lack of data
   rather than lack of retention. Re-probe once months have accumulated.
@@ -442,7 +448,23 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
       database password (peer auth over a unix socket). The cost is losing Cloud
       Scheduler's externally-visible failures, so a heartbeat check against
       `run_log` is required — see infra/README.md.
-- [ ] **Schedule and cadence** — for incremental pulls and for reconciliation
+- [x] **Schedule and cadence** — decided 2026-08-02:
+
+      | job | cadence | window | chunk |
+      |---|---|---|---|
+      | incremental | **hourly** | last 4 h | single request |
+      | reconcile | daily | previous 24 h | 2 × 12 h |
+      | gap sweep | weekly | last 90 d, missing slots only | 12 h |
+
+      Cadence and resolution are independent: the cloud stores a fixed 5-minute
+      grid regardless of when it is asked, so a slower cadence costs no fidelity
+      — only freshness and failure-detection latency. The 4-hour window means
+      each 5-minute point is fetched ~4 times before ageing out, so a single
+      failed pull loses nothing. Overlap is free because change detection counts
+      unchanged rows rather than writing them (§7).
+
+      Source data is ~18 minutes stale at the API, so pulling faster than
+      roughly every 15 minutes chases data that has not arrived.
 - [x] **Table shape** — decided 2026-08-02: **long/tall** (`observation`), with
       `observation_wide` and `observation_wide_metric` as derived views.
       Applied to ecowitt-db. `metric_catalog` seeded with all 42 metrics.
