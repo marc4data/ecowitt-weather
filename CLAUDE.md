@@ -61,7 +61,8 @@ been observed.
 
 **The first deliverable is a discovery script, not a pipeline.** It should:
 
-- Call `/device/real_time` and `/device/history` with `call_back=all`
+- Call `/device/real_time` with `call_back=all`. **History rejects `all`** —
+  use an explicit group list (see §5.0)
 - Persist raw responses verbatim to disk as dated samples (gitignored)
 - Emit an inventory: every field observed, its type, example values, null rate,
   which sensors appear, what units are reported
@@ -77,13 +78,35 @@ DDL, ORM models, or dataclasses before then.
 | Item | Value |
 |---|---|
 | Console | Ecowitt HP2560 (7" TFT receiver) |
-| Console MAC | TBD — on console Weather Server page |
-| Sensors attached | TBD — enumerate during discovery |
-| Reporting interval to cloud | Default 1 min — confirm actual setting |
+| Console MAC | ✅ in `.env` as `ECOWITT_MAC` |
+| Sensors attached | ✅ enumerated — see below |
+| Reporting interval to cloud | Cloud stores at 5 min; console push interval still unconfirmed |
 | Console history/SD interval | TBD (1–240 min, selectable) |
 | ecowitt.net account | ✅ exists |
 | Application Key / API Key | ✅ generated (Private Center) |
-| Station first-report date | TBD — needed to interpret retention probes |
+| Station first-report date | **2026-08-01** — the station is new |
+| Console timezone | UTC−5 observed 2026-08-02. **Detect at runtime, never hardcode** |
+
+Sensor groups observed in `/device/real_time` (42 leaf metrics):
+
+| Group | Metrics |
+|---|---|
+| `outdoor` | temperature, feels_like, app_temp, dew_point, vpd, humidity |
+| `indoor` | temperature, humidity, dew_point, feels_like, app_tempin |
+| `solar_and_uvi` | solar, uvi |
+| `rainfall_piezo` | rain_rate, daily, event, 1_hour, weekly, monthly, yearly |
+| `wind` | wind_speed, wind_gust, wind_direction |
+| `pressure` | relative, absolute |
+| `temp_and_humidity_ch1/2/3` | temperature, humidity |
+| `soil_ch1/2` | soilmoisture, ad |
+| `battery` | haptic_array_battery, haptic_array_capacitor, 3× temp_humidity_sensor_chN, 2× soilmoisture_sensor_chN |
+
+Rain is **piezo/haptic only** — there is no `rainfall` (tipping-bucket) group.
+Requesting one returns `code=0` with empty data, not an error.
+
+⚠️ **The station has ~1 day of history.** Every retention question in §6 is
+unanswerable until it accumulates months. Do not mistake an empty window for an
+API retention limit.
 
 Credentials exist, so discovery (§3) is unblocked. The console MAC is still needed
 as a request parameter — read it off the console's Weather Server page.
@@ -111,11 +134,38 @@ Fallback path, not automated: the console writes basic *and* extra-sensor data t
 a micro SD card (max 32 GB, FAT32) at the configured interval, exportable as CSV.
 Useful for disaster recovery. Console internal memory holds basic data only.
 
+### 5.0 ✅ Confirmed API behavior (observed 2026-08-02, Phase 0)
+
+These supersede the hypotheses below wherever they conflict. Evidence:
+`samples/reports/granularity.md` and the raw captures.
+
+1. **`start_date` / `end_date` are interpreted in console-local time, but every
+   returned epoch is UTC.** The input is local, the output is UTC — asymmetric.
+   Framing a request in UTC returns `code=0` with an empty body: a silent miss,
+   never an error. This is the single easiest way to corrupt a backfill.
+   The offset must be **detected at runtime** (`probe.detect_console_utc_offset`),
+   never hardcoded — it is a console setting that need not match the host, and
+   it shifts under DST.
+2. **`call_back=all` is rejected by `/device/history`** with `code=40016`
+   (`"all is invalid"`). It works only on `/device/real_time`. History requires
+   an explicit comma-separated group or field list.
+3. **An unrecognised `call_back` group returns `code=0` with empty data.** A
+   typo is indistinguishable from a sensor that reported nothing. Assert that
+   requested groups actually came back.
+4. **`cycle_type=5min` is honored up to a 24 h span and silently downgraded
+   beyond it** — 48 h returns 30 min, 30 d returns 4 hour, all with `code=0`.
+   Backfill chunk size is therefore **24 h**, and returned timestamp spacing
+   must be verified on every response. The exact cutoff between 24 h and 48 h
+   was not bisected; 24 h is used because it is both safe and natural.
+5. **A 90 d span returns zero points**, not an error.
+6. Real-time exposes **42** leaf metrics; history returns **39** for the same
+   groups. The three-field difference is not yet identified — that is D3.
+
 ### 5.1 API mechanics
 
 Derived from the reference implementation (§5.3) and its inline docs. Dates to
 roughly 2022–23 — **treat as a hypothesis to confirm during discovery**, not as
-current documentation.
+current documentation. Where §5.0 contradicts this section, §5.0 wins.
 
 Endpoints:
 
@@ -154,17 +204,30 @@ Responses carry a `code` field. Check it; a 200 HTTP status does not imply succe
 
 ### 5.2 Response shapes (expected)
 
+✅ **Both shapes confirmed 2026-08-02.** All 42 real-time leaves carry exactly
+`{time, unit, value}`; history leaves carry `{unit, list}`.
+
 **Real-time** — nested; leaf nodes carry value, unit, and time:
 
 ```
-data.outdoor.temperature = {'time': <epoch>, 'unit': '℃', 'value': '13.7'}
+data.outdoor.temperature = {'time': '1785644149', 'unit': 'ºF', 'value': '78.3'}
 ```
 
 **History** — unit stated once per metric, then a timestamp→value map:
 
 ```
-data.outdoor.temperature = {'unit': '℃', 'list': {<epoch>: '13.7', ...}}
+data.outdoor.temperature = {'unit': 'ºF', 'list': {'1785644149': '78.3', ...}}
 ```
+
+⚠️ **Unit encoding gotcha.** This account returns `ºF` — that is
+**U+00BA MASCULINE ORDINAL INDICATOR**, not U+00B0 DEGREE SIGN, and not the
+U+2103 `℃` this section originally guessed. Wind direction is bare `º`
+(U+00BA). Solar is `W/m²` (U+00B2). Store unit strings as opaque bytes and
+compare exactly; a `°`/`º` normalisation would silently rewrite history.
+Empty-string units are used for dimensionless values (`uvi`, `soil_chN.ad`).
+
+Observed units: `ºF`, `%`, `inHg`, `mph`, `in`, `in/hr`, `W/m²`, `V`, `º`, `''`.
+Note `outdoor.vpd` reports in `inHg`.
 
 Note the history shape is already effectively long/tall. A wide curated table
 would mean pivoting against the source's natural format — weigh that when
@@ -216,13 +279,18 @@ Consequences:
 - `cycle_type=5min` can be requested explicitly (§5.1), so granularity is not
   purely a function of span. But the reference implementation notes that valid
   values depend on timespan.
-- ⚠️ **UNVERIFIED — test first in discovery (§3):** at what span does
-  `cycle_type=5min` stop being honored? Does the API reject the request, or
-  silently return coarser data? **Silent downgrade is the dangerous case** — it
-  would produce gap-free-looking data at the wrong resolution. Determine the
-  maximum safe chunk size empirically, then make backfill chunk to it and
-  **verify returned timestamp spacing on every response** rather than trusting
-  the request.
+- ✅ **RESOLVED 2026-08-02 — and it is the bad outcome.** `cycle_type=5min` is
+  honored to **24 h** and **silently downgraded** past it (48 h → 30 min,
+  30 d → 4 hour), always with `code=0`. The API does not reject the request.
+  Consequences, all mandatory for Phase 1:
+  - Backfill chunks at **24 h**.
+  - **Verify returned timestamp spacing on every response.** A response that
+    claims success at the wrong resolution is indistinguishable from a correct
+    one until you measure the deltas.
+  - Never infer resolution from the request parameters.
+- ⚠️ The **retention** tiers above remain **UNVERIFIED**. The station's history
+  begins 2026-08-01, so every retention probe returned empty for lack of data
+  rather than lack of retention. Re-probe once months have accumulated.
 - The API doc site blocks automated fetching — open in a browser.
 
 ## 7. Instrumentation — required, not optional

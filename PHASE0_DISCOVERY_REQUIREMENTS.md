@@ -39,13 +39,13 @@ will not.
 Phase 0 is complete when all of the following exist and have been reviewed by the
 user:
 
-| # | Artifact | Path |
-|---|---|---|
-| D1 | Raw response samples, verbatim | `samples/raw/` |
-| D2 | Granularity probe results | `samples/reports/granularity.md` |
-| D3 | Field inventory | `samples/reports/field_inventory.md` |
-| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` |
-| D5 | Written recommendation on table shape | `samples/reports/findings.md` |
+| # | Artifact | Path | Status |
+|---|---|---|---|
+| D1 | Raw response samples, verbatim | `samples/raw/` | ✅ accumulating |
+| D2 | Granularity probe results | `samples/reports/granularity.md` | ✅ done 2026-08-02 |
+| D3 | Field inventory | `samples/reports/field_inventory.md` | ☐ |
+| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` | ☐ blocked on unit IDs (§8) |
+| D5 | Written recommendation on table shape | `samples/reports/findings.md` | ☐ |
 
 **Schema design does not begin until the user has reviewed these.**
 
@@ -167,7 +167,9 @@ size in Phase 1.
 
 ## 7. Field inventory (D3)
 
-Call `/device/real_time` and `/device/history` with `call_back=all`.
+Call `/device/real_time` with `call_back=all`. **History rejects `all`**
+(`code=40016`) — pass the explicit group list instead, and frame the window in
+console-local time or it returns empty with `code=0`. See `CLAUDE.md` §5.0.
 
 Take at least 3 real-time samples spaced ≥5 minutes apart, and at least one
 24-hour history sample.
