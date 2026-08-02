@@ -407,6 +407,18 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 - [ ] **Table shape** — long/tall (`station, ts_utc, metric, value, unit`) vs.
       wide. Long tolerates new sensors without migration; wide is easier to query.
       Decide after discovery (§3).
+- [x] **Units to pin** — decided 2026-08-02: **imperial is canonical, metric is a
+      derived view**. Pin `temp_unitid=2` (`ºF`), `pressure_unitid=4` (`inHg`),
+      `wind_speed_unitid=9` (`mph`), `rainfall_unitid=13` (`in`, `in/hr`),
+      `solar_irradiance_unitid=16` (`W/m²`). Stored rows then match the console
+      display exactly.
+
+      **Do not dual-ingest.** The API rounds each unit system independently to
+      one decimal, so the two never agree: at one instant `outdoor.dew_point`
+      returned `18.1 ℃` and `64.5 ºF`, but 18.1 ℃ is 64.58 ºF. Storing both as
+      returned would bake in a permanent 0.02–0.08 ºF disagreement that
+      reconciliation (§9) could not distinguish from real drift. Metric is
+      computed on read from the canonical imperial value.
 - [ ] **Resample interval and gap-fill rules** (§9)
 - [ ] **Retention policy for the local store** — presumed "keep everything," confirm
 - [ ] **Flooding data source** (Phase 3) — sensor, format, cadence all unknown
