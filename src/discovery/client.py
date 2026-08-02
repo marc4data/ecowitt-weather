@@ -282,6 +282,16 @@ class EcowittClient:
             label=label,
         )
 
+    def device_info(self, *, label: str = "device-info", **extra: Any) -> RawResponse:
+        """Device metadata, including `date_zone_id` — the console's IANA timezone.
+
+        This is the authoritative answer to the console-local question that
+        `start_date`/`end_date` depend on, and it beats inferring an offset:
+        an IANA zone carries DST rules, so a window spanning a transition is
+        converted correctly instead of being an hour off.
+        """
+        return self.get("device/info", dict(extra), label=label)
+
     def device_list(self, *, label: str = "device-list", **extra: Any) -> RawResponse:
         """List devices on the account.
 

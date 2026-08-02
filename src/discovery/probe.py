@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .client import DiscoveryError, EcowittClient, RawResponse
 
@@ -95,6 +96,32 @@ class ProbeResult:
             if abs(self.median_delta_s - seconds) <= seconds * 0.2:
                 return name
         return f"{self.median_delta_s:.0f}s"
+
+
+def resolve_console_tz(client: EcowittClient) -> tuple[tzinfo, str]:
+    """Get the console's timezone, preferring the API's own answer.
+
+    `/device/info` reports `date_zone_id` as an IANA name (e.g.
+    `America/Chicago`). That is strictly better than measuring an offset:
+    a fixed offset is correct only until the next DST transition, and is
+    already wrong for any *historical* window that straddles one — which is
+    exactly what backfill does. Falls back to measurement if the field is
+    missing or names a zone this host does not know.
+
+    Returns the timezone and a short provenance string for the report.
+    """
+    try:
+        response = client.device_info(label="tz-device-info")
+        data = response.payload.get("data") if isinstance(response.payload, dict) else None
+        zone_name = (data or {}).get("date_zone_id") if isinstance(data, dict) else None
+        if zone_name:
+            return ZoneInfo(str(zone_name)), f"/device/info date_zone_id={zone_name}"
+    except (DiscoveryError, ZoneInfoNotFoundError, ValueError):
+        pass
+
+    offset = detect_console_utc_offset(client)
+    hours = offset.total_seconds() / 3600
+    return timezone(offset), f"measured empirically ({hours:+.2f} h, no DST rules)"
 
 
 def detect_console_utc_offset(client: EcowittClient) -> timedelta:
@@ -189,7 +216,7 @@ def _measure(
     span_label: str,
     start_utc: datetime,
     end_utc: datetime,
-    offset: timedelta,
+    console_tz: tzinfo,
 ) -> ProbeResult:
     result = ProbeResult(
         kind=kind,
@@ -199,7 +226,6 @@ def _measure(
         window_end_utc=end_utc,
     )
 
-    console_tz = timezone(offset)
     try:
         response = client.history(
             start_date=start_utc.astimezone(console_tz),
@@ -237,7 +263,8 @@ def _measure(
 
 @dataclass
 class ProbeRun:
-    offset: timedelta
+    console_tz: tzinfo
+    tz_source: str = ""
     results: list[ProbeResult] = field(default_factory=list)
 
     @property
@@ -281,10 +308,15 @@ class ProbeRun:
         return "empty (code 0)"
 
 
-def run(client: EcowittClient, *, offset: timedelta | None = None) -> ProbeRun:
-    if offset is None:
-        offset = detect_console_utc_offset(client)
-    run_state = ProbeRun(offset=offset)
+def run(
+    client: EcowittClient,
+    *,
+    console_tz: tzinfo | None = None,
+    tz_source: str = "",
+) -> ProbeRun:
+    if console_tz is None:
+        console_tz, tz_source = resolve_console_tz(client)
+    run_state = ProbeRun(console_tz=console_tz, tz_source=tz_source)
 
     anchor = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
@@ -300,7 +332,7 @@ def run(client: EcowittClient, *, offset: timedelta | None = None) -> ProbeRun:
                     span_label=span_label,
                     start_utc=anchor - span,
                     end_utc=anchor,
-                    offset=offset,
+                    console_tz=console_tz,
                 )
             )
 
@@ -314,7 +346,7 @@ def run(client: EcowittClient, *, offset: timedelta | None = None) -> ProbeRun:
                 span_label=f"{age_days}d ago",
                 start_utc=end - timedelta(hours=24),
                 end_utc=end,
-                offset=offset,
+                console_tz=console_tz,
             )
         )
 
@@ -322,13 +354,12 @@ def run(client: EcowittClient, *, offset: timedelta | None = None) -> ProbeRun:
 
 
 def render_markdown(run_state: ProbeRun, *, generated_at: datetime) -> str:
-    offset_hours = run_state.offset.total_seconds() / 3600
     lines: list[str] = [
         "# D2 — Granularity probe results",
         "",
         f"Generated {generated_at.isoformat()} · `call_back={PROBE_CALL_BACK}`",
         "",
-        f"Console UTC offset detected at runtime: **{offset_hours:+.2f} h**. All request",
+        f"Console timezone: **{run_state.console_tz}** ({run_state.tz_source}). All request",
         "windows below were framed in console-local time; all timestamps shown are UTC.",
         "",
         "## Span sweep",

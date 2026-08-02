@@ -16,6 +16,7 @@ from discovery.client import (
     ApiError,
     ConfigError,
     Credentials,
+    DiscoveryError,
     EcowittClient,
     RawResponse,
     redact_url,
@@ -204,3 +205,44 @@ def test_console_offset_sign_is_not_flipped(tmp_path, monkeypatch):
     detected = probe.detect_console_utc_offset(client)
 
     assert detected == console_offset, f"expected UTC-5, got {detected}"
+
+
+def test_console_tz_prefers_device_info_over_measurement(tmp_path, credentials):
+    """An IANA zone from /device/info must win over a measured fixed offset.
+
+    A fixed offset is right only until the next DST transition, and is already
+    wrong for any historical window straddling one — which is what backfill
+    does. If this silently fell back to measurement, backfill would be an hour
+    off for half the year and nothing would fail.
+    """
+    import json
+    from zoneinfo import ZoneInfo
+
+    from discovery import probe
+
+    body = json.dumps(
+        {"code": 0, "msg": "success", "data": {"date_zone_id": "America/Chicago"}}
+    ).encode()
+    client = _client(tmp_path, credentials, body)
+
+    tz, source = probe.resolve_console_tz(client)
+
+    assert tz == ZoneInfo("America/Chicago")
+    assert "device/info" in source
+    # One request only: measurement must not have been attempted.
+    assert len(client._session.calls) == 1
+
+
+def test_console_tz_falls_back_when_zone_missing(tmp_path, credentials):
+    """No date_zone_id -> fall back to measurement rather than guessing UTC."""
+    import json
+
+    from discovery import probe
+
+    body = json.dumps({"code": 0, "msg": "success", "data": {"name": "station"}}).encode()
+    client = _client(tmp_path, credentials, body)
+
+    # Measurement then fails on the empty history body, which must surface as a
+    # DiscoveryError rather than a silent UTC default.
+    with pytest.raises(DiscoveryError):
+        probe.resolve_console_tz(client)

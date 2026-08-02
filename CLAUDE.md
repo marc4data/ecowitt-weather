@@ -143,9 +143,12 @@ These supersede the hypotheses below wherever they conflict. Evidence:
    returned epoch is UTC.** The input is local, the output is UTC — asymmetric.
    Framing a request in UTC returns `code=0` with an empty body: a silent miss,
    never an error. This is the single easiest way to corrupt a backfill.
-   The offset must be **detected at runtime** (`probe.detect_console_utc_offset`),
-   never hardcoded — it is a console setting that need not match the host, and
-   it shifts under DST.
+   **Resolve the zone from `/device/info` (`probe.resolve_console_tz`)** — it
+   returns `date_zone_id` as an IANA name, currently `America/Chicago`. Use the
+   IANA zone, not a fixed offset: an offset is correct only until the next DST
+   transition and is *already* wrong for any historical window straddling one,
+   which is exactly what backfill does. Measuring the offset empirically is
+   the fallback, and it carries no DST rules.
 2. **`call_back=all` is rejected by `/device/history`** with `code=40016`
    (`"all is invalid"`). It works only on `/device/real_time`. History requires
    an explicit comma-separated group or field list.
@@ -160,6 +163,20 @@ These supersede the hypotheses below wherever they conflict. Evidence:
 5. **A 90 d span returns zero points**, not an error.
 6. Real-time exposes **42** leaf metrics; history returns **39** for the same
    groups. The three-field difference is not yet identified — that is D3.
+7. **`/device/info` and `/device/list` both exist** (neither is in §5.1) and are
+   the answer to several questions:
+   - `date_zone_id` — the console's IANA timezone, authoritative (see 1).
+   - `mac` — recoverable from the account, so the console need not be read.
+   - `createtime` — 2026-07-23, though history only reaches 2026-08-01.
+     Registration date is **not** first-data date; do not use it as one.
+   - `latitude` / `longitude` / `stationtype` (`EasyWeatherPro_V5.2.2`).
+   - `last_update` — embeds the entire real-time payload, making `/device/info`
+     a superset of `/device/real_time`.
+   `device/setting`, `device/detail`, `device/unit`, and `user/info` all return
+   `code=404`. **There is no API endpoint exposing the console's unit settings.**
+   The console's unit configuration is visible only as the *default* units in a
+   response that sends no unit parameters — which is precisely why §10 requires
+   pinning unit IDs per request rather than trusting the console.
 
 ### 5.1 API mechanics
 

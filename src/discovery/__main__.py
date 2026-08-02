@@ -106,15 +106,15 @@ def cmd_probe(args: argparse.Namespace) -> int:
     client = EcowittClient(credentials, args.raw_dir)
 
     if args.console_offset is None:
-        print("Detecting console UTC offset ...")
-        offset = probe.detect_console_utc_offset(client)
+        console_tz, tz_source = probe.resolve_console_tz(client)
     else:
-        offset = timedelta(hours=args.console_offset)
-    print(f"  console offset: {offset.total_seconds() / 3600:+.2f} h")
+        console_tz = timezone(timedelta(hours=args.console_offset))
+        tz_source = "--console-offset override"
+    print(f"  console timezone: {console_tz} ({tz_source})")
 
     total = len(probe.SPANS) * len(probe.CYCLE_TYPES) + len(probe.RETENTION_AGES_DAYS)
     print(f"Running {total} probe requests (ascending span, sequential) ...")
-    run_state = probe.run(client, offset=offset)
+    run_state = probe.run(client, console_tz=console_tz, tz_source=tz_source)
 
     for result in run_state.results:
         note = result.error or f"n={result.point_count:,} honored={result.honored}"
@@ -167,6 +167,55 @@ def cmd_units(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sample(args: argparse.Namespace) -> int:
+    """Take spaced real-time samples + a 24h history capture (D3 collection)."""
+    from datetime import timedelta, timezone
+
+    from . import inventory, probe
+
+    credentials = Credentials.from_env(require_mac=True)
+    client = EcowittClient(credentials, args.raw_dir)
+
+    if args.console_offset is None:
+        console_tz, tz_source = probe.resolve_console_tz(client)
+    else:
+        console_tz = timezone(timedelta(hours=args.console_offset))
+        tz_source = "--console-offset override"
+    print(f"Console timezone: {console_tz} ({tz_source})")
+    print(f"Taking {args.count} real-time samples {args.interval}s apart, then 24h history ...")
+
+    inventory.collect(client, count=args.count, interval_s=args.interval, console_tz=console_tz)
+    print("\nCollection complete. Run `python -m discovery inventory` to build D3.")
+    return 0
+
+
+def cmd_inventory(args: argparse.Namespace) -> int:
+    """Build D3 from captures already on disk. Makes no API calls."""
+    from datetime import datetime, timezone
+
+    from . import inventory
+
+    stats, counts = inventory.build(args.raw_dir)
+    if not stats:
+        print(
+            "No d3-* captures found. Run `python -m discovery sample` first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"{counts.get('real_time', 0)} real-time + {counts.get('history', 0)} history "
+        f"capture(s) -> {len(stats)} field paths"
+    )
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        inventory.render_markdown(stats, counts, generated_at=datetime.now(timezone.utc)),
+        encoding="utf-8",
+    )
+    print(f"Report: {args.report}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="discovery", description=__doc__)
     parser.add_argument(
@@ -207,6 +256,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="where the D4 report is written",
     )
     units_parser.set_defaults(func=cmd_units)
+
+    sample_parser = sub.add_parser("sample", help="collect spaced samples for D3")
+    sample_parser.add_argument("--count", type=int, default=4)
+    sample_parser.add_argument("--interval", type=int, default=300, help="seconds between samples")
+    sample_parser.add_argument("--console-offset", type=float, default=None)
+    sample_parser.set_defaults(func=cmd_sample)
+
+    inventory_parser = sub.add_parser("inventory", help="build D3 from captures on disk")
+    inventory_parser.add_argument(
+        "--report", type=Path, default=Path("samples/reports/field_inventory.md")
+    )
+    inventory_parser.set_defaults(func=cmd_inventory)
     return parser
 
 
