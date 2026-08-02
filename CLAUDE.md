@@ -161,8 +161,15 @@ These supersede the hypotheses below wherever they conflict. Evidence:
    must be verified on every response. The exact cutoff between 24 h and 48 h
    was not bisected; 24 h is used because it is both safe and natural.
 5. **A 90 d span returns zero points**, not an error.
-6. Real-time exposes **42** leaf metrics; history returns **39** for the same
-   groups. The three-field difference is not yet identified — that is D3.
+6. Real-time exposes **42** leaf metrics; history returns **39**. ✅ The three
+   missing from history are identified: `battery.temp_humidity_sensor_ch1/2/3`,
+   the unitless status codes. History carries every voltage battery field but
+   drops the status ones.
+8. **Gaps are routine.** A 24 h history capture returned 281 of an expected 289
+   points — two dropouts totalling 8 missing 5-minute slots, on a healthy
+   station. Gap detection needs a threshold or it will alarm constantly.
+9. **All history metrics share one identical timestamp set** (281 stamps × 39
+   metrics, no ragged edges), so pivoting long→wide is clean.
 7. **`/device/info` and `/device/list` both exist** (neither is in §5.1) and are
    the answer to several questions:
    - `date_zone_id` — the console's IANA timezone, authoritative (see 1).

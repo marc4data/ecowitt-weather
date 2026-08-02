@@ -43,9 +43,9 @@ user:
 |---|---|---|---|
 | D1 | Raw response samples, verbatim | `samples/raw/` | ✅ accumulating |
 | D2 | Granularity probe results | `samples/reports/granularity.md` | ✅ done 2026-08-02 |
-| D3 | Field inventory | `samples/reports/field_inventory.md` | ☐ |
-| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` | ◐ §8 units done; §9 notes pending |
-| D5 | Written recommendation on table shape | `samples/reports/findings.md` | ☐ |
+| D3 | Field inventory | `samples/reports/field_inventory.md` | ✅ done 2026-08-02 |
+| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` | ✅ done 2026-08-02 |
+| D5 | Written recommendation on table shape | `samples/reports/findings.md` | ✅ awaiting your review |
 
 **Schema design does not begin until the user has reviewed these.**
 
