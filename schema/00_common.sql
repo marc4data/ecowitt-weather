@@ -1,193 +1,170 @@
 -- Phase 1 schema, part 1 of 2: tables shared by BOTH curated-table options.
--- Target: Cloud SQL for PostgreSQL (decided 2026-08-02).
+-- Target: BigQuery, dataset location us-central1 (decided 2026-08-02).
 --
--- STATUS: not yet executed. No Postgres instance exists yet; this has been
--- parse-checked only. Run it against a scratch database before trusting it.
+-- STATUS: not yet executed. Parse-checked as BigQuery only.
 --
--- Everything here is independent of the long-vs-wide decision.
+-- ---------------------------------------------------------------------------
+-- READ THIS FIRST: what changed when we moved off Postgres
+--
+-- The Postgres draft (commit 23054c2) enforced five of CLAUDE.md's rules as
+-- database constraints. BigQuery has none of those mechanisms:
+--
+--   | rule                          | Postgres        | BigQuery              |
+--   |-------------------------------|-----------------|-----------------------|
+--   | raw payload is immutable      | trigger, RAISEs | convention + detection|
+--   | no unredacted credential      | CHECK           | assertion query       |
+--   | idempotent load               | enforced PK     | NOT ENFORCED PK, MERGE|
+--   | metric must be classified     | FOREIGN KEY     | assertion query       |
+--   | resampling traps              | CHECK           | assertion query       |
+--
+-- Correctness therefore moves from the schema into `assertions.sql`, which
+-- MUST run as part of every load. A constraint refuses bad data; an assertion
+-- only reports it afterwards. That is a genuine downgrade, accepted knowingly
+-- in exchange for ~$0/month, and it is why the assertions are not optional.
+-- ---------------------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS ecowitt
+    OPTIONS (location = 'us-central1', description = 'Ecowitt weather pipeline');
 
 -- ---------------------------------------------------------------------------
 -- run_log (CLAUDE.md §7)
 --
 -- "A run that changed nothing still writes a row. Absence of a row means the
--- job didn't run." That distinction is the whole point, so the row is written
--- at start with status 'running' and updated on completion -- a crashed job
--- leaves a visible 'running' row rather than no row at all.
+-- job didn't run." Written at start with status 'running', updated on finish,
+-- so a crashed job leaves a visible 'running' row rather than no row.
+--
+-- No ENUM type in BigQuery: trigger/status/mode are STRING, and their allowed
+-- values are checked in assertions.sql instead.
 -- ---------------------------------------------------------------------------
 
-CREATE TYPE run_trigger AS ENUM ('scheduled', 'manual', 'backfill', 'reconcile');
-CREATE TYPE run_status  AS ENUM ('running', 'succeeded', 'failed', 'partial');
+CREATE TABLE IF NOT EXISTS ecowitt.run_log (
+    run_id           STRING    NOT NULL,
+    trigger          STRING    NOT NULL,  -- scheduled|manual|backfill|reconcile
+    mode             STRING    NOT NULL,
+    window_start_utc TIMESTAMP,
+    window_end_utc   TIMESTAMP,
+    cycle_type       STRING,
+    -- What the API actually returned, not what was asked for. D2 proved
+    -- cycle_type is silently downgraded past a 24h span, so the observed
+    -- spacing must be recorded and compared, never assumed.
+    observed_delta_s INT64,
+    started_at       TIMESTAMP NOT NULL,
+    ended_at         TIMESTAMP,
+    status           STRING    NOT NULL,  -- running|succeeded|failed|partial
+    rows_fetched     INT64     NOT NULL,
+    rows_inserted    INT64     NOT NULL,
+    rows_updated     INT64     NOT NULL,
+    rows_unchanged   INT64     NOT NULL,
+    rows_rejected    INT64     NOT NULL,
+    error_detail     STRING,
 
-CREATE TABLE run_log (
-    run_id            uuid        PRIMARY KEY,
-    trigger           run_trigger NOT NULL,
-    mode              text        NOT NULL,
-    window_start_utc  timestamptz,
-    window_end_utc    timestamptz,
-    cycle_type        text,
-    -- What the API actually returned, not what we asked for (D2: silent
-    -- downgrade). Phase 1 must compare these two and fail on mismatch.
-    observed_delta_s  integer,
-    started_at        timestamptz NOT NULL DEFAULT now(),
-    ended_at          timestamptz,
-    status            run_status  NOT NULL DEFAULT 'running',
-    rows_fetched      integer     NOT NULL DEFAULT 0,
-    rows_inserted     integer     NOT NULL DEFAULT 0,
-    rows_updated      integer     NOT NULL DEFAULT 0,
-    rows_unchanged    integer     NOT NULL DEFAULT 0,
-    rows_rejected     integer     NOT NULL DEFAULT 0,
-    error_detail      text,
-
-    CONSTRAINT run_log_ends_after_start
-        CHECK (ended_at IS NULL OR ended_at >= started_at),
-    CONSTRAINT run_log_terminal_has_end
-        CHECK (status = 'running' OR ended_at IS NOT NULL),
-    CONSTRAINT run_log_window_ordered
-        CHECK (window_start_utc IS NULL OR window_end_utc IS NULL
-               OR window_start_utc <= window_end_utc)
-);
-
-CREATE INDEX run_log_started ON run_log (started_at DESC);
-CREATE INDEX run_log_unfinished ON run_log (status) WHERE status = 'running';
+    PRIMARY KEY (run_id) NOT ENFORCED
+)
+PARTITION BY DATE(started_at)
+OPTIONS (description = 'One row per execution. Absence of a row means no run.');
 
 -- ---------------------------------------------------------------------------
 -- raw_payload (CLAUDE.md §8, §10)
 --
 -- "Never discard raw payloads." "Raw landing is append-only and immutable."
--- Immutability is enforced by a trigger that RAISES rather than a rule that
--- silently discards -- §10 requires failing loudly.
+--
+-- ⚠️ BigQuery cannot enforce append-only. There is no trigger, and IAM has no
+-- insert-without-delete role — bigquery.dataEditor grants both. Immutability
+-- is therefore a convention, backed by:
+--   * body_sha256, so a mutated row is detectable
+--   * assertions.sql checking that no (raw_id, body_sha256) pair ever changes
+--   * 7-day time travel, which can recover an accidental mutation
+-- Detection, not prevention. Do not mistake one for the other.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE raw_payload (
-    raw_id       bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    run_id       uuid        NOT NULL REFERENCES run_log (run_id),
-    endpoint     text        NOT NULL,
-    label        text        NOT NULL,
-    requested_at timestamptz NOT NULL,
-    request_url  text        NOT NULL,
-    http_status  integer     NOT NULL,
-    api_code     text,
-    api_message  text,
-    body         jsonb       NOT NULL,
-    body_sha256  bytea       NOT NULL,
-    body_bytes   integer     NOT NULL,
-    duration_s   numeric(10, 4),
+CREATE TABLE IF NOT EXISTS ecowitt.raw_payload (
+    raw_id       STRING    NOT NULL,      -- uuid; no sequences in BigQuery
+    run_id       STRING    NOT NULL,
+    endpoint     STRING    NOT NULL,
+    label        STRING    NOT NULL,
+    requested_at TIMESTAMP NOT NULL,
+    request_url  STRING    NOT NULL,      -- credentials redacted; asserted
+    http_status  INT64     NOT NULL,
+    api_code     STRING,
+    api_message  STRING,
+    body         JSON      NOT NULL,
+    body_sha256  STRING    NOT NULL,
+    body_bytes   INT64     NOT NULL,
+    duration_s   NUMERIC,
 
-    -- §10: "Secrets never enter the repo." They must not enter the database
-    -- either. A redaction bug becomes a constraint violation, not a leak.
-    CONSTRAINT raw_payload_url_redacted CHECK (
-        (position('application_key=' in request_url) = 0
-         OR position('application_key=REDACTED' in request_url) > 0)
-        AND
-        (position('api_key=' in request_url) = 0
-         OR position('api_key=REDACTED' in request_url) > 0)
-    )
+    PRIMARY KEY (raw_id) NOT ENFORCED,
+    FOREIGN KEY (run_id) REFERENCES ecowitt.run_log (run_id) NOT ENFORCED
+)
+PARTITION BY DATE(requested_at)
+OPTIONS (
+    description = 'Append-only landing zone. NEVER mutate. See assertions.sql.',
+    require_partition_filter = TRUE
 );
-
-CREATE INDEX raw_payload_run ON raw_payload (run_id);
-CREATE INDEX raw_payload_requested ON raw_payload (requested_at DESC);
--- Same body landed twice (overlapping incremental + backfill) is detectable.
-CREATE INDEX raw_payload_digest ON raw_payload (body_sha256);
-
-CREATE FUNCTION raw_payload_is_immutable() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION
-        'raw_payload is append-only (CLAUDE.md §8): % denied on raw_id=%',
-        TG_OP, OLD.raw_id;
-END;
-$$;
-
-CREATE TRIGGER raw_payload_no_mutate
-    BEFORE UPDATE OR DELETE ON raw_payload
-    FOR EACH ROW EXECUTE FUNCTION raw_payload_is_immutable();
 
 -- ---------------------------------------------------------------------------
 -- metric_catalog (samples/reports/metric_catalog.md)
 --
--- The catalog is data, not code, so the resampler cannot silently disagree
--- with the documented rules and curated rows cannot reference a metric whose
--- semantics were never classified.
+-- In Postgres the four resampling traps were CHECK constraints. Here they are
+-- columns whose consistency assertions.sql verifies.
 -- ---------------------------------------------------------------------------
 
-CREATE TYPE metric_kind AS ENUM (
-    'instantaneous',  -- point-in-time reading; mean over the slot
-    'derived',        -- Ecowitt-computed; recompute, never resample
-    'circular',       -- degrees; vector mean, NEVER linear
-    'extremum',       -- per-interval max; max, never mean
-    'accumulator',    -- running total that resets; last, diff within epoch
-    'opaque',         -- meaning not established; carry, never interpolate
-    'diagnostic',     -- hardware health, not weather
-    'status'          -- unitless code; no arithmetic, ever
-);
+CREATE TABLE IF NOT EXISTS ecowitt.metric_catalog (
+    metric         STRING  NOT NULL,
+    -- instantaneous|derived|circular|extremum|accumulator|opaque|diagnostic|status
+    kind           STRING  NOT NULL,
+    canonical_unit STRING  NOT NULL,
+    -- mean|recompute|vector_mean|max|last|carry
+    resample_rule  STRING  NOT NULL,
+    resamplable    BOOL    NOT NULL,
+    notes          STRING,
 
-CREATE TABLE metric_catalog (
-    metric         text        PRIMARY KEY,
-    kind           metric_kind NOT NULL,
-    canonical_unit text        NOT NULL,
-    resample_rule  text        NOT NULL,
-    resamplable    boolean     NOT NULL,
-    notes          text,
-
-    -- The four traps in the catalog, enforced rather than documented.
-    CONSTRAINT metric_circular_needs_vector_mean
-        CHECK (kind <> 'circular' OR resample_rule = 'vector_mean'),
-    CONSTRAINT metric_extremum_needs_max
-        CHECK (kind <> 'extremum' OR resample_rule = 'max'),
-    CONSTRAINT metric_accumulator_needs_last
-        CHECK (kind <> 'accumulator' OR resample_rule = 'last'),
-    CONSTRAINT metric_status_and_opaque_not_resamplable
-        CHECK (kind NOT IN ('status', 'opaque') OR resamplable = false)
-);
+    PRIMARY KEY (metric) NOT ENFORCED
+)
+OPTIONS (description = 'Per-metric semantics. Load before any observation row.');
 
 -- ---------------------------------------------------------------------------
 -- change_log (CLAUDE.md §7, §8)
---
--- The mechanism for point-in-time reconstruction: "what did the record for
--- timestamp T look like as of date D?"
+-- The mechanism for point-in-time reconstruction.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE change_log (
-    change_id  bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    station_id text        NOT NULL,
-    ts_utc     timestamptz NOT NULL,
-    metric     text        NOT NULL REFERENCES metric_catalog (metric),
-    old_value  text,
-    new_value  text,
-    old_unit   text,
-    new_unit   text,
-    run_id     uuid        NOT NULL REFERENCES run_log (run_id),
-    changed_at timestamptz NOT NULL DEFAULT now(),
-    reason     text        NOT NULL,
+CREATE TABLE IF NOT EXISTS ecowitt.change_log (
+    change_id  STRING    NOT NULL,       -- uuid
+    station_id STRING    NOT NULL,
+    ts_utc     TIMESTAMP NOT NULL,
+    metric     STRING    NOT NULL,
+    old_value  STRING,
+    new_value  STRING,
+    old_unit   STRING,
+    new_unit   STRING,
+    run_id     STRING    NOT NULL,
+    changed_at TIMESTAMP NOT NULL,
+    reason     STRING    NOT NULL,
 
-    CONSTRAINT change_log_something_changed
-        CHECK (old_value IS DISTINCT FROM new_value
-               OR old_unit IS DISTINCT FROM new_unit)
-);
-
--- Supports the §8 question directly: filter to a natural key, order by
--- changed_at, take everything at or before D.
-CREATE INDEX change_log_point_in_time
-    ON change_log (station_id, metric, ts_utc, changed_at DESC);
-CREATE INDEX change_log_run ON change_log (run_id);
+    PRIMARY KEY (change_id) NOT ENFORCED,
+    FOREIGN KEY (run_id) REFERENCES ecowitt.run_log (run_id) NOT ENFORCED
+)
+PARTITION BY DATE(changed_at)
+CLUSTER BY station_id, metric, ts_utc
+OPTIONS (description = 'Field-level audit trail. Clustered for §8 lookups.');
 
 -- ---------------------------------------------------------------------------
 -- quarantine (CLAUDE.md §10)
 -- "Rejected rows are quarantined, not dropped."
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE quarantine (
-    quarantine_id bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    run_id        uuid        NOT NULL REFERENCES run_log (run_id),
-    raw_id        bigint      REFERENCES raw_payload (raw_id),
-    station_id    text,
-    ts_utc        timestamptz,
-    metric        text,
-    value_text    text,
-    unit          text,
-    reason        text        NOT NULL,
-    quarantined_at timestamptz NOT NULL DEFAULT now()
-);
+CREATE TABLE IF NOT EXISTS ecowitt.quarantine (
+    quarantine_id  STRING    NOT NULL,
+    run_id         STRING    NOT NULL,
+    raw_id         STRING,
+    station_id     STRING,
+    ts_utc         TIMESTAMP,
+    metric         STRING,
+    value_text     STRING,
+    unit           STRING,
+    reason         STRING    NOT NULL,
+    quarantined_at TIMESTAMP NOT NULL,
 
-CREATE INDEX quarantine_run ON quarantine (run_id);
-CREATE INDEX quarantine_reason ON quarantine (reason);
+    PRIMARY KEY (quarantine_id) NOT ENFORCED
+)
+PARTITION BY DATE(quarantined_at)
+CLUSTER BY reason;

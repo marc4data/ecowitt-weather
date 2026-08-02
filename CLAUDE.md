@@ -424,11 +424,19 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 
 ## 11. Open decisions — ASK, do not assume
 
-- [x] **Database target** — decided 2026-08-02: **Cloud SQL for PostgreSQL**.
-      ~4.4M rows/yr is small; the workload is upsert- and change-detection-heavy,
-      which is where BigQuery is weakest (costly quota-limited MERGE, streaming
-      buffer complicating read-after-write). BigQuery remains sensible as a
-      Phase 4 export target, not as the curated store.
+- [x] **Database target** — decided 2026-08-02: **BigQuery**, dataset location
+      `us-central1`. Cost drove it: ~$0/month against ~$120/year for the
+      smallest Cloud SQL instance, since 0.5 GB/yr and sub-GB scans sit far
+      inside the free tier. AWS and Azure were considered and are not cheaper
+      (~$12/mo each) and would split the stack away from Cloud Run.
+
+      ⚠️ **This trade gave up the enforcement layer.** BigQuery has no CHECK,
+      no triggers, no enforced PK/FK. Five rules that the Postgres draft
+      (commit `23054c2`) made impossible to violate are now only detectable,
+      via `schema/assertions.sql`, which **must run on every load** and must
+      fail the run. Correctness moved from the schema into code — deliberately,
+      but it is a downgrade, and it is the reason the assertions are not
+      optional.
 - [x] **Where the job runs** — decided 2026-08-02: **Cloud Run job + Cloud
       Scheduler**. Chosen for §10's "a silently dead scheduled job is the
       primary risk": a sleeping workstation is exactly that failure mode, and a
@@ -437,7 +445,12 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 - [ ] **Table shape** — ⏳ awaiting your call from real DDL. Both schemas are
       drafted and parse-checked: `schema/option_a_long.sql`,
       `schema/option_b_wide.sql`, compared in `schema/COMPARISON.md`.
-      Recommendation is Option A (long store, wide view).
+      Recommendation is still Option A (long store, wide view), but on a much
+      narrower margin than on Postgres: BigQuery's free `ADD COLUMN`, columnar
+      storage, and unenforced FKs each removed an argument that favoured long.
+      What remains decisive is that `change_log` is field-level by §7's own
+      definition, so long's row identity and the audit trail's key are the same
+      tuple.
 - [x] **Units to pin** — decided 2026-08-02: **imperial is canonical, metric is a
       derived view**. Pin `temp_unitid=2` (`ºF`), `pressure_unitid=4` (`inHg`),
       `wind_speed_unitid=9` (`mph`), `rainfall_unitid=13` (`in`, `in/hr`),

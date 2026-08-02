@@ -1,9 +1,8 @@
 """Parse-check the Phase 1 DDL.
 
-No Postgres instance exists yet, so this validates *syntax only*. It cannot
-catch a semantic error, and sqlglot falls back to generic parsing for plpgsql
-function bodies — so the immutability trigger is not meaningfully checked here.
-Execute the DDL against a scratch database before trusting it.
+No BigQuery dataset exists yet, so this validates *syntax only*. It cannot
+catch a semantic error and it cannot tell you whether an ASSERT actually holds.
+Execute against a scratch dataset before trusting any of it.
 """
 
 from __future__ import annotations
@@ -31,8 +30,8 @@ def test_schema_files_exist():
 
 
 @pytest.mark.parametrize("path", SCHEMA_FILES, ids=lambda p: p.name)
-def test_schema_parses_as_postgres(path: Path):
-    statements = [s for s in sqlglot.parse(_executable_sql(path), dialect="postgres") if s]
+def test_schema_parses_as_bigquery(path: Path):
+    statements = [s for s in sqlglot.parse(_executable_sql(path), dialect="bigquery") if s]
     assert statements, f"{path.name} produced no statements"
 
 

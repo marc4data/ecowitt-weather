@@ -1,68 +1,63 @@
 # Infrastructure
 
-Target, decided 2026-08-02: **Cloud SQL for PostgreSQL**, with the Phase 1 job
-running as a **Cloud Run job on Cloud Scheduler**.
+Decided 2026-08-02: **BigQuery** (dataset location `us-central1`), with the
+Phase 1 job running as a **Cloud Run job on Cloud Scheduler**.
 
-Provisioning lives in [`create_cloudsql.sh`](create_cloudsql.sh) rather than in
-console clicks, so the choices are reviewable in git and the setup is
-repeatable. The script is safe to re-run — every step checks for existence
-first — and supports `--dry-run`.
+Provisioning lives in [`create_bigquery.sh`](create_bigquery.sh) rather than in
+console clicks, so the choices are reviewable in git. Safe to re-run; supports
+`--dry-run`.
 
 ## Before running it
 
-`gcloud` OAuth cannot run unattended, so these two are yours:
+`gcloud` OAuth cannot run unattended, so these are yours:
 
 ```bash
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
 ```
 
-The project also needs billing enabled. The script's preflight fails loudly if
-either is missing rather than proceeding.
+The preflight fails loudly if either is missing rather than proceeding.
 
 ## Cost
 
-**This creates a billable resource that charges monthly until deleted.**
-Rough us-central1 figures — confirm against current pricing, these move:
+Effectively **$0/month** at this volume, and it stays there for years:
 
-| tier | RAM | ~monthly | notes |
+| | usage | free tier | cost |
 |---|---|---|---|
-| `db-f1-micro` | 0.6 GB | ~$8–10 | shared core, **no SLA** |
-| `db-g1-small` | 1.7 GB | ~$25–30 | shared core, no SLA |
-| `db-custom-1-3840` | 3.75 GB | ~$50+ | dedicated vCPU, SLA-covered |
+| Storage | ~0.5 GB/yr long, ~37 MB/yr wide | 10 GiB/month | $0 |
+| Queries | full scan ≈ 0.5 GB | 1 TiB/month | $0 |
+| Batch loads | free operation | — | $0 |
 
-Plus ~$1.70/mo per 10 GB SSD, plus PITR write-ahead log storage.
+Beyond the free tier it is $6.25/TiB scanned and $23.55/TiB/month active
+storage. Reaching either would take roughly 2,000 full-table scans a month or
+20 years of accumulation.
 
-At ~4.4M rows/year the workload is tiny; `db-f1-micro` is sufficient on
-capacity. The honest tension is that shared-core tiers carry no SLA, and this
-project's stated primary risk is a silently dead job (§10). Tiers can be
-changed later with a restart and no data loss, so starting small is reversible.
+**The one way this design could cost money** is an unpartitioned scan. Both
+curated tables set `require_partition_filter = TRUE`, and the `MERGE` carries an
+explicit `DATE(...) BETWEEN` predicate, so a query that would scan every
+partition fails instead of silently billing.
 
-## Choices baked into the script, and why
+## What BigQuery does not give us
 
-| flag | reason |
-|---|---|
-| `--backup`, `--enable-point-in-time-recovery` | §8 point-in-time correctness — lets the database itself be rewound, independently of the `change_log` audit trail |
-| `--deletion-protection` | this holds the only full-resolution copy of a rolling 3-month window that **cannot be re-fetched once lost** (§6) |
-| `--storage-auto-increase` | a full disk is a silently dead job (§10) |
-| `--availability-type=zonal` | HA roughly doubles cost; a batch job that retries tolerates a zonal restart |
-| no `--authorized-networks` | the instance takes a public IP but accepts nothing directly; connections come via the Cloud SQL connector with IAM, so no open port |
+This was a deliberate trade — ~$0/month in exchange for losing the enforcement
+layer. On Postgres (commit `23054c2`) five `CLAUDE.md` rules were *impossible*
+to violate; here they are merely *detectable*:
 
-## Secrets
+| rule | Postgres | BigQuery |
+|---|---|---|
+| raw payload immutable | trigger that RAISEs | convention + digest check |
+| no unredacted credential | `CHECK` | assertion query |
+| idempotent load | enforced `PRIMARY KEY` | `NOT ENFORCED` PK + `MERGE` |
+| every metric classified | `FOREIGN KEY` | assertion query |
+| resampling traps | `CHECK` | assertion query |
 
-§10: secrets never enter the repo. The application password is generated inside
-the script, written straight to Secret Manager, and never echoed or written to
-disk. Retrieve it with:
+[`../schema/assertions.sql`](../schema/assertions.sql) carries that burden and
+**must run on every load**, with a failure marking the run `failed` and exiting
+non-zero. An assertion suite that runs but is ignored is worse than none.
 
-```bash
-gcloud secrets versions access latest --secret=ecowitt-db-password
-```
-
-**Known weakness:** `gcloud sql users create --password=` puts the password in
-that process's argv briefly. `--prompt-for-password` is safer but cannot be
-scripted. The proper fix is IAM database authentication for the Cloud Run
-service account, which removes the application password entirely — worth doing
-before the job goes unattended, and it makes this exposure moot.
+Note also that BigQuery IAM has no insert-without-delete role — `dataEditor`
+grants both — so append-only really is a convention, not a permission boundary.
+7-day time travel is the recovery path if it is violated.
 
 ## Not yet provisioned
 

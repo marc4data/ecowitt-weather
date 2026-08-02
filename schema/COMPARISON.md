@@ -1,122 +1,100 @@
-# Table shape — the same five operations, in both schemas
+# Table shape on BigQuery — the same operations, both schemas
 
-You asked to decide from DDL rather than prose. Both schemas are written to be
-genuinely usable; Option B is not a strawman. Files:
+Files: [`00_common.sql`](00_common.sql) (shared), [`assertions.sql`](assertions.sql)
+(**required on every load**), [`option_a_long.sql`](option_a_long.sql),
+[`option_b_wide.sql`](option_b_wide.sql).
 
-- [`00_common.sql`](00_common.sql) — shared by both: `run_log`, `raw_payload`,
-  `metric_catalog`, `change_log`, `quarantine`
-- [`option_a_long.sql`](option_a_long.sql) — long store, wide view
-- [`option_b_wide.sql`](option_b_wide.sql) — wide store, long view
-
-**Neither has been executed.** No Postgres instance exists yet. Both are
-parse-checked as PostgreSQL by `tests/test_schema.py`, which validates syntax
-only — it cannot catch a semantic error, and it does not meaningfully check the
-plpgsql immutability trigger. Run them against a scratch database before
-trusting them.
+**Nothing here has been executed.** No dataset exists yet. `tests/test_schema.py`
+parse-checks all four as BigQuery — syntax only. It cannot catch a semantic
+error and it cannot tell you whether an `ASSERT` holds.
 
 ---
 
-## 1. Idempotent load with change detection (§7, §10)
+## First: the platform change moved this decision
 
-**A — one statement, and "unchanged" falls out of it.**
+The Postgres draft (commit `23054c2`) recommended long, and two of its three
+strongest arguments **do not survive the move to BigQuery**:
 
-```sql
-ON CONFLICT (station_id, ts_utc, metric) DO UPDATE
-    SET value_text = EXCLUDED.value_text, ...
-    WHERE o.value_text IS DISTINCT FROM EXCLUDED.value_text
-       OR o.unit       IS DISTINCT FROM EXCLUDED.unit
-RETURNING (xmax = 0) AS was_insert;
-```
+| argument for long, on Postgres | on BigQuery |
+|---|---|
+| Adding a sensor means a migration on a table holding training data | ❌ **Gone.** `ALTER TABLE ADD COLUMN` is a free metadata operation — instant, no rewrite, no downtime |
+| A `FOREIGN KEY` guarantees every metric is classified | ❌ **Gone.** FKs are `NOT ENFORCED`; both options rely on an assertion instead |
+| Sparse/unused columns waste space | ❌ **Gone.** Columnar storage means unused columns cost nothing to store or scan |
 
-Conflicting rows that fail the `WHERE` return nothing — those are the unchanged
-ones. `run_log`'s inserted/updated/unchanged counters come straight from the
-statement.
+And wide gained arguments it did not have on Postgres:
 
-**B — the same idea, written 42 times.** Every column appears in the `SET`, and
-again in the `WHERE`, and the two must stay in sync forever. Worse, `RETURNING`
-gives you the whole row but not *which field* changed, so `change_log` rows have
-to be produced by diffing in application code.
+- **42× fewer rows** — 105k/year vs 4.4M/year. `MERGE` touches 288 rows/day
+  instead of 12k.
+- **~13× less storage** — long repeats `station_id` and `metric` on every row
+  (~495 MB/yr vs ~37 MB/yr). Both are free-tier trivial, but it is real.
+- **Feature matrices are a plain `SELECT`**, which matters for Phase 4 and for
+  BigQuery ML.
 
-> §7 says "Never issue a blind upsert" and "unchanged must be a countable
-> outcome." A gets both structurally. B gets them by discipline.
+This is now a close decision. It was not close on Postgres.
 
-## 2. Adding a sensor
+## What still favours long
 
-You have 2 of 16 soil channels and 3 of 8 T/RH channels connected.
+**1. `change_log` is field-level, and long's row identity matches it.**
 
-**A** — two `INSERT`s into `metric_catalog`. No `ALTER`, no downtime, no
-redeploy.
+§7 defines the audit trail as `natural key · field · old · new`. Option A's row
+*is* that tuple, so emitting `change_log` falls out of the same comparison that
+drives the `MERGE`. Option B has to answer "which of 42 columns changed" with
+either 42 `UNION ALL` branches or an application-side diff.
 
-**B** — `ALTER TABLE` on the table holding your training data, plus edits to the
-upsert, the `WHERE`, the change-detection diff, `observation_long`, and every
-downstream view. Rows written before the `ALTER` carry `NULL`, which is
-indistinguishable from "sensor present but silent."
+This is the one argument the platform change did not touch, and §7 and §8 are
+the project's instrumentation backbone.
 
-## 3. Units (§10 — "record the unit each value arrived in")
+**2. Units are per-metric, so wide needs a metric-keyed table anyway.**
 
-Units are per-metric, not per-row: `outdoor.vpd` is `inHg` while
-`outdoor.temperature` is `ºF`.
+`outdoor_vpd` is `inHg` while `outdoor_temperature` is `ºF`. Option B ends up
+with `observation_wide_units` — a long table by another name.
 
-**A** — a column on the row. Done.
+**3. `value_text` preservation.**
 
-**B** — three options, all bad: 42 parallel `*_unit` columns (84 columns, nearly
-all constant), one unit set per row (loses fidelity), or a metric-keyed side
-table. B uses the side table — **which means the wide design needs a
-metric-keyed table anyway.**
+Option A stores exact returned bytes beside the parsed number, so an
+unparseable value is a *recorded fact*. Option B would need 42 more `STRING`
+columns; without them, a parse failure is `NULL` — indistinguishable from "the
+sensor said nothing". That ambiguity is exactly what §10's no-unconditional-casts
+rule exists to prevent.
 
-## 4. Unparseable values (§10 — "no unconditional casts")
+**4. Adding a sensor is still zero-code in A.** The `ALTER` is free in B, but
+the `MERGE` `SET` list, the `MERGE` `WHERE` list, the change-detection diff,
+`observation_long`, and every downstream view all change by hand.
 
-**A** — `value_text` holds exact bytes, `value_num` holds the parsed form or
-`NULL`. A value that fails to parse is a recorded fact.
+## The option I considered and am not recommending
 
-**B** — only the typed column exists. An unparseable value can only be `NULL`,
-indistinguishable from "sensor reported nothing." The raw JSON is still in
-`raw_payload`, so nothing is lost permanently — but recovery means re-reading
-raw payloads instead of reading the curated row.
+BigQuery's idiomatic answer is neither: **one row per `(station, ts_utc)` with
+metrics as `ARRAY<STRUCT<metric, value_text, value_num, unit, source>>`.** It
+gets wide's row count, long's tolerance of new sensors, per-metric units, and
+`value_text` — all at once, and `UNNEST` gives you the long view for free.
 
-## 5. Point-in-time reconstruction (§8)
-
-**A** — a `WHERE` clause. `change_log`'s natural key *is* the observation
-table's primary key `(station_id, ts_utc, metric)`, so the join is direct.
-
-**B** — `change_log` is field-level by §7's definition, so it stays keyed by
-metric while the table is keyed by timestamp. Every reconstruction crosses that
-mismatch.
-
----
-
-## Where B genuinely wins
-
-Not nothing:
-
-- **Feature matrices are free.** `SELECT * FROM observation_wide` is the Phase 4
-  shape, with no pivot.
-- **Rows are dense, not sparse.** All 39 history metrics share one identical
-  281-timestamp set (D3), so a wide row has no ragged edges. This is the usual
-  argument against wide, and it does not apply here.
-- **Fewer rows** — 288/day versus ~12k/day. Both are trivial at this scale
-  (~4.4M rows/year for A).
-- **Simpler to eyeball** in a SQL console.
+I am not recommending it because updating one metric means rewriting the whole
+row's array, and reconstructing that array while preserving metrics *not* in the
+current pull is fiddly array manipulation. It makes §7's change detection — the
+thing this project cares most about — the hardest part of the design rather
+than the easiest. Worth revisiting if `MERGE` cost ever becomes real, which at
+this volume it will not.
 
 ## Recommendation
 
-**Option A.** The deciding factor is not query convenience — B wins that — but
-that `change_log` is *already* field-level in §7, so A's primary key and the
-audit trail's natural key are the same tuple. Every §7 and §8 requirement is
-then a property of the schema rather than a rule the application must remember.
+**Still Option A, but on a narrower margin than on Postgres.**
 
-B's advantages are all recoverable as views. A's advantages are not recoverable
-by a wide table.
+The deciding factor is now singular rather than cumulative: `change_log` is
+field-level by §7's own definition, so in A the curated table's key and the
+audit trail's key are the same tuple, and change detection is free. Everything
+else has equalised or flipped toward B.
 
-The honest cost of A: a pivot sits between you and a feature matrix, and
-`observation_wide` has to be regenerated when metrics are added. That is a
-generated view, not a migration.
+If you weight Phase 4 convenience over Phase 1 instrumentation, B is a
+defensible choice on BigQuery in a way it was not on Postgres. I would not
+argue hard against it.
 
-## Open question either way
+## What both options now depend on
 
-`metric_catalog` must be populated before any observation row can be inserted
-(the FK enforces it). The classifications come from
-[`../samples/reports/metric_catalog.md`](../samples/reports/metric_catalog.md)
-and encode four rules as `CHECK` constraints — circular metrics must use
-`vector_mean`, extrema must use `max`, accumulators must use `last`, and
-`status`/`opaque` metrics cannot be marked resamplable.
+`assertions.sql` is not optional. On Postgres, five of `CLAUDE.md`'s rules were
+enforced by the database — an unredacted credential, a mutated raw payload, a
+duplicate observation, an unclassified metric, and a violated resampling rule
+were all *impossible*. On BigQuery each is merely *detectable*.
+
+Wire the assertions into the Cloud Run job so a failure marks the run `failed`
+and exits non-zero. An assertion suite that runs but is ignored is worse than
+none, because it looks like coverage.
