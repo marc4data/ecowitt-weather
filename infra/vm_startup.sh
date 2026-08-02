@@ -15,7 +15,11 @@ echo "=== ecowitt startup $(date -u +%FT%TZ) ==="
 
 DB_NAME="ecowitt"
 DB_USER="ecowitt"
-PG_VERSION="16"
+# Debian 12 ships PostgreSQL 15 in its own repos, so 16 comes from PGDG (the
+# upstream Postgres apt repo). PG_VERSION is the version we ASK for; the
+# version actually installed is detected afterwards rather than assumed --
+# hardcoding it is what broke the first run of this script.
+PG_WANTED="16"
 
 # ---------------------------------------------------------------------------
 # Swap. e2-micro has 1 GB of RAM and shares a core. Postgres plus a Python
@@ -38,12 +42,38 @@ fi
 # PostgreSQL
 # ---------------------------------------------------------------------------
 if ! command -v psql >/dev/null 2>&1; then
-    echo "--- installing postgresql-$PG_VERSION"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y -qq "postgresql-$PG_VERSION" postgresql-client-"$PG_VERSION" \
-        python3-venv python3-pip
+    apt-get install -y -qq curl ca-certificates gnupg python3-venv python3-pip
+
+    # PGDG repo, per the official Postgres instructions.
+    CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+    if [[ ! -f /etc/apt/sources.list.d/pgdg.list ]]; then
+        echo "--- adding PGDG repo for $CODENAME"
+        install -d /usr/share/postgresql-common/pgdg
+        curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+        echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc]" \
+             "https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" \
+            > /etc/apt/sources.list.d/pgdg.list
+        apt-get update -qq
+    fi
+
+    # Fall back to whatever the distro ships rather than failing outright: a
+    # working Postgres 15 beats a VM with no database because an upstream repo
+    # was unreachable.
+    if apt-get install -y -qq "postgresql-$PG_WANTED"; then
+        echo "--- installed postgresql-$PG_WANTED from PGDG"
+    else
+        echo "--- PGDG postgresql-$PG_WANTED unavailable; falling back to distro default"
+        apt-get install -y -qq postgresql
+    fi
 fi
+
+# Detect what is actually installed instead of assuming.
+PG_VERSION="$(ls -1 /etc/postgresql 2>/dev/null | sort -V | tail -1)"
+[[ -n "$PG_VERSION" ]] || { echo "FATAL: no /etc/postgresql/<version> found"; exit 1; }
+echo "--- postgres version in use: $PG_VERSION"
 
 PGCONF="/etc/postgresql/$PG_VERSION/main/conf.d/ecowitt.conf"
 if [[ ! -f "$PGCONF" ]]; then

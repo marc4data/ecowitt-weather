@@ -76,6 +76,22 @@ liability of self-managing.
   `roles/editor`
 - Ecowitt API credentials live in **Secret Manager**, fetched at runtime
 
+## Provisioned 2026-08-02
+
+| resource | value |
+|---|---|
+| project | `ecowitt-504320` |
+| instance | `ecowitt-db`, us-central1-a, e2-micro, 30 GB pd-standard |
+| Postgres | 16.14 from PGDG (Debian 12 ships 15, so the repo is required) |
+| database | `ecowitt`, owned by role `ecowitt`, peer auth over unix socket |
+| backups | `gs://ecowitt-504320-ecowitt-backups`, 35-day lifecycle |
+| SSH | IAP tunnel only (`35.235.240.0/20`) |
+
+`schema/00_common.sql` is applied. All six constraints were verified to reject
+their violations — see `schema/verify_constraints.sql`.
+
+The curated table is **not** applied: the long-vs-wide decision is still open.
+
 ## Still open
 
 **Monitoring.** The earlier "Cloud Run + Cloud Scheduler" decision is
