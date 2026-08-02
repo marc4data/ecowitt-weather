@@ -384,6 +384,24 @@ regular grid; the source does not reliably provide one. Interpolation and
 gap-fill rules are TBD and must be explicit, recorded per row, and never silently
 applied. A synthesized value must be distinguishable from an observed one.
 
+⚠️ **The resampling rule is not the same for every metric.** See
+`samples/reports/metric_catalog.md`. Four rules are mandatory, not stylistic:
+
+1. `wind.wind_direction` is **circular**. Use a vector mean
+   (`atan2(mean sin, mean cos)`), never a linear one. Measured: 17 north-crossings
+   in a single 24 h capture, each producing a **180° error** under linear
+   averaging — a north wind averages to south.
+2. `wind.wind_gust` is an **extremum** over the interval. Aggregate with `max`;
+   a mean systematically understates peak wind.
+3. `rainfall_piezo.*` except `rain_rate` are **accumulators that reset**.
+   Aggregate with `last`; a negative delta is a reset boundary, not negative rain.
+4. Derived fields (`dew_point`, `feels_like`, `app_temp`, `vpd`, `app_tempin`)
+   must be **recomputed from resampled inputs**, not resampled independently, or
+   the stored record contradicts itself.
+
+`soil_chN.ad` and the unitless `battery.*` status codes are excluded from
+resampling entirely — carry the last value, never do arithmetic on them.
+
 **Reconcile** — re-query a past window and compare against what is stored.
 Discrepancies write to `change_log` with reason. Cadence TBD.
 
