@@ -96,6 +96,44 @@ def cmd_devices(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Granularity probe (D2). Writes samples/reports/granularity.md."""
+    from datetime import datetime, timedelta, timezone
+
+    from . import probe
+
+    credentials = Credentials.from_env(require_mac=True)
+    client = EcowittClient(credentials, args.raw_dir)
+
+    if args.console_offset is None:
+        print("Detecting console UTC offset ...")
+        offset = probe.detect_console_utc_offset(client)
+    else:
+        offset = timedelta(hours=args.console_offset)
+    print(f"  console offset: {offset.total_seconds() / 3600:+.2f} h")
+
+    total = len(probe.SPANS) * len(probe.CYCLE_TYPES) + len(probe.RETENTION_AGES_DAYS)
+    print(f"Running {total} probe requests (ascending span, sequential) ...")
+    run_state = probe.run(client, offset=offset)
+
+    for result in run_state.results:
+        note = result.error or f"n={result.point_count:,} honored={result.honored}"
+        print(
+            f"  {result.kind:9} {result.cycle_type:5} {result.span_label:8} "
+            f"code={result.api_code} {note}"
+        )
+
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        probe.render_markdown(run_state, generated_at=datetime.now(timezone.utc)),
+        encoding="utf-8",
+    )
+    print(f"\nMax span honoring 5min : {run_state.max_honored_span}")
+    print(f"Silent downgrade       : {'YES' if run_state.silent_downgrade else 'no'}")
+    print(f"Report                 : {args.report}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="discovery", description=__doc__)
     parser.add_argument(
@@ -112,6 +150,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("devices", help="try to recover the console MAC from the account").set_defaults(
         func=cmd_devices
     )
+
+    probe_parser = sub.add_parser("probe", help="granularity probe (D2)")
+    probe_parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("samples/reports/granularity.md"),
+        help="where the D2 report is written",
+    )
+    probe_parser.add_argument(
+        "--console-offset",
+        type=float,
+        default=None,
+        help="console UTC offset in hours (e.g. -5). Detected automatically if omitted.",
+    )
+    probe_parser.set_defaults(func=cmd_probe)
     return parser
 
 

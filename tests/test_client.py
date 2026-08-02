@@ -160,3 +160,47 @@ def test_api_code_zero_as_string_counts_as_success():
         payload={"code": "0"},
     )
     assert response.ok
+
+
+def test_console_offset_sign_is_not_flipped(tmp_path, monkeypatch):
+    """The API reads date strings as console-local: UTC = string - offset.
+
+    A sign flip here does not fail loudly — it doubles the windowing error and
+    the probe silently measures the wrong hours. Pin the direction.
+    """
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from discovery import probe
+
+    console_offset = timedelta(hours=-5)  # UTC-5
+    anchor = datetime(2026, 8, 2, 4, 0, tzinfo=timezone.utc)
+    sent_start = anchor - timedelta(hours=18)
+    # What the API actually serves for that string, per UTC = string - offset.
+    first_point = int((sent_start - console_offset).timestamp())
+
+    body = json.dumps(
+        {
+            "code": 0,
+            "msg": "success",
+            "data": {
+                "outdoor": {
+                    "temperature": {
+                        "unit": "ºF",
+                        "list": {str(first_point + n * 300): "78.0" for n in range(12)},
+                    }
+                }
+            },
+        }
+    ).encode()
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return anchor if tz else anchor.replace(tzinfo=None)
+
+    monkeypatch.setattr(probe, "datetime", FrozenDatetime)
+    client = _client(tmp_path, Credentials(APP_KEY, API_KEY, MAC), body)
+    detected = probe.detect_console_utc_offset(client)
+
+    assert detected == console_offset, f"expected UTC-5, got {detected}"
