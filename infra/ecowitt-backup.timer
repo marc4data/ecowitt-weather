@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Ecowitt database backup nightly
+
+[Timer]
+# 09:00 UTC = 04:00 America/Chicago. Deliberately not midnight local: the two
+# observed data gaps in the Phase 0 capture both fell near local midnight, and
+# a backup competing with ingestion for 1 GB of RAM is avoidable.
+OnCalendar=*-*-* 09:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

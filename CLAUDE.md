@@ -424,23 +424,24 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 
 ## 11. Open decisions — ASK, do not assume
 
-- [x] **Database target** — decided 2026-08-02: **BigQuery**, dataset location
-      `us-central1`. Cost drove it: ~$0/month against ~$120/year for the
-      smallest Cloud SQL instance, since 0.5 GB/yr and sub-GB scans sit far
-      inside the free tier. AWS and Azure were considered and are not cheaper
-      (~$12/mo each) and would split the stack away from Cloud Run.
+- [x] **Database target** — decided 2026-08-02: **self-managed PostgreSQL 16 on
+      a GCP `e2-micro` VM**, us-central1. Third choice after Cloud SQL (~$120/yr)
+      and BigQuery ($0 but no CHECK/trigger/FK). This keeps the full enforcement
+      layer — the schema makes five §7/§8/§10 rules impossible to violate rather
+      than merely detectable — with 30 GB of Always Free disk.
 
-      ⚠️ **This trade gave up the enforcement layer.** BigQuery has no CHECK,
-      no triggers, no enforced PK/FK. Five rules that the Postgres draft
-      (commit `23054c2`) made impossible to violate are now only detectable,
-      via `schema/assertions.sql`, which **must run on every load** and must
-      fail the run. Correctness moved from the schema into code — deliberately,
-      but it is a downgrade, and it is the reason the assertions are not
-      optional.
-- [x] **Where the job runs** — decided 2026-08-02: **Cloud Run job + Cloud
-      Scheduler**. Chosen for §10's "a silently dead scheduled job is the
-      primary risk": a sleeping workstation is exactly that failure mode, and a
-      missing `run_log` row is only a signal if the runner was supposed to be up.
+      ⚠️ **Not actually free: ~$3.65/month for the external IPv4**, which no GCP
+      free tier covers and which the VM needs to reach the Ecowitt API. Cloud NAT
+      is the only alternative and costs ~10x more. ~$44/year all in.
+
+      ⚠️ **Backups are now ours.** `infra/backup.sh` dumps, verifies the archive
+      is restorable, cross-checks row counts, uploads, and re-reads the object
+      back. Must be running before real data lands.
+- [x] **Where the job runs** — superseded 2026-08-02: **on the same e2-micro**,
+      not Cloud Run. Colocating removes a VPC connector, an egress path, and the
+      database password (peer auth over a unix socket). The cost is losing Cloud
+      Scheduler's externally-visible failures, so a heartbeat check against
+      `run_log` is required — see infra/README.md.
 - [ ] **Schedule and cadence** — for incremental pulls and for reconciliation
 - [ ] **Table shape** — ⏳ awaiting your call from real DDL. Both schemas are
       drafted and parse-checked: `schema/option_a_long.sql`,

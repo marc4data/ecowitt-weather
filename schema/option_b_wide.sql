@@ -1,175 +1,161 @@
--- OPTION B — wide curated store, long exposed as a view. BigQuery.
--- Apply 00_common.sql first, and run assertions.sql on every load.
--- STATUS: not yet executed; parse-checked as BigQuery only.
+-- OPTION B — wide curated store, long exposed as a view.
+-- Apply 00_common.sql first. Target: PostgreSQL 16 on a GCP e2-micro VM.
+-- STATUS: not yet executed; parse-checked only.
 --
--- Written to be genuinely usable, not a strawman — and on BigQuery its case is
--- considerably stronger than it was on Postgres:
---   * columnar storage means unused columns cost nothing to store or scan
---   * ALTER TABLE ADD COLUMN is a free metadata operation, no table rewrite
---   * 105k rows/year instead of 4.4M means MERGE touches 42x fewer rows
--- The first two gut the two biggest arguments that favoured long on Postgres.
+-- Written to be genuinely usable, not a strawman. The case for it is real:
+-- all 39 history metrics share one identical timestamp set (D3), so rows are
+-- dense rather than sparse, and a feature matrix is a plain SELECT.
 
-CREATE TABLE IF NOT EXISTS ecowitt.observation_wide (
-    station_id STRING    NOT NULL,
-    ts_utc     TIMESTAMP NOT NULL,
+CREATE TYPE observation_source AS ENUM ('observed', 'resampled', 'backfilled');
+
+CREATE TABLE observation_wide (
+    station_id text        NOT NULL,
+    ts_utc     timestamptz NOT NULL,
 
     -- outdoor
-    outdoor_temperature      FLOAT64,
-    outdoor_feels_like       FLOAT64,
-    outdoor_app_temp         FLOAT64,
-    outdoor_dew_point        FLOAT64,
-    outdoor_vpd              FLOAT64,
-    outdoor_humidity         FLOAT64,
+    outdoor_temperature      double precision,
+    outdoor_feels_like       double precision,
+    outdoor_app_temp         double precision,
+    outdoor_dew_point        double precision,
+    outdoor_vpd              double precision,
+    outdoor_humidity         double precision,
     -- indoor
-    indoor_temperature       FLOAT64,
-    indoor_humidity          FLOAT64,
-    indoor_dew_point         FLOAT64,
-    indoor_feels_like        FLOAT64,
-    indoor_app_tempin        FLOAT64,
+    indoor_temperature       double precision,
+    indoor_humidity          double precision,
+    indoor_dew_point         double precision,
+    indoor_feels_like        double precision,
+    indoor_app_tempin        double precision,
     -- solar
-    solar                    FLOAT64,
-    uvi                      FLOAT64,
+    solar                    double precision,
+    uvi                      double precision,
     -- rainfall (piezo only; this station has no tipping bucket)
-    rainfall_piezo_rain_rate FLOAT64,
-    rainfall_piezo_event     FLOAT64,
-    rainfall_piezo_1_hour    FLOAT64,
-    rainfall_piezo_daily     FLOAT64,
-    rainfall_piezo_weekly    FLOAT64,
-    rainfall_piezo_monthly   FLOAT64,
-    rainfall_piezo_yearly    FLOAT64,
+    rainfall_piezo_rain_rate double precision,
+    rainfall_piezo_event     double precision,
+    rainfall_piezo_1_hour    double precision,
+    rainfall_piezo_daily     double precision,
+    rainfall_piezo_weekly    double precision,
+    rainfall_piezo_monthly   double precision,
+    rainfall_piezo_yearly    double precision,
     -- wind
-    wind_speed               FLOAT64,
-    wind_gust                FLOAT64,
-    wind_direction           FLOAT64,
+    wind_speed               double precision,
+    wind_gust                double precision,
+    wind_direction           double precision,
     -- pressure
-    pressure_relative        FLOAT64,
-    pressure_absolute        FLOAT64,
+    pressure_relative        double precision,
+    pressure_absolute        double precision,
     -- extra T/RH channels (station supports 8; 3 attached)
-    temp_and_humidity_ch1_temperature FLOAT64,
-    temp_and_humidity_ch1_humidity    FLOAT64,
-    temp_and_humidity_ch2_temperature FLOAT64,
-    temp_and_humidity_ch2_humidity    FLOAT64,
-    temp_and_humidity_ch3_temperature FLOAT64,
-    temp_and_humidity_ch3_humidity    FLOAT64,
+    temp_and_humidity_ch1_temperature double precision,
+    temp_and_humidity_ch1_humidity    double precision,
+    temp_and_humidity_ch2_temperature double precision,
+    temp_and_humidity_ch2_humidity    double precision,
+    temp_and_humidity_ch3_temperature double precision,
+    temp_and_humidity_ch3_humidity    double precision,
     -- soil (station supports 16; 2 attached)
-    soil_ch1_soilmoisture    FLOAT64,
-    soil_ch1_ad              INT64,
-    soil_ch2_soilmoisture    FLOAT64,
-    soil_ch2_ad              INT64,
+    soil_ch1_soilmoisture    double precision,
+    soil_ch1_ad              integer,
+    soil_ch2_soilmoisture    double precision,
+    soil_ch2_ad              integer,
     -- battery: volts
-    battery_haptic_array_battery    FLOAT64,
-    battery_haptic_array_capacitor  FLOAT64,
-    battery_soilmoisture_sensor_ch1 FLOAT64,
-    battery_soilmoisture_sensor_ch2 FLOAT64,
-    -- battery: unitless status codes, real-time only (D3 endpoint asymmetry)
-    battery_temp_humidity_sensor_ch1 STRING,
-    battery_temp_humidity_sensor_ch2 STRING,
-    battery_temp_humidity_sensor_ch3 STRING,
+    battery_haptic_array_battery   double precision,
+    battery_haptic_array_capacitor double precision,
+    battery_soilmoisture_sensor_ch1 double precision,
+    battery_soilmoisture_sensor_ch2 double precision,
+    -- battery: unitless status codes, real-time only (D3 asymmetry)
+    battery_temp_humidity_sensor_ch1 text,
+    battery_temp_humidity_sensor_ch2 text,
+    battery_temp_humidity_sensor_ch3 text,
 
-    source         STRING    NOT NULL,
-    first_seen_run STRING    NOT NULL,
-    last_seen_run  STRING    NOT NULL,
-    updated_at     TIMESTAMP NOT NULL,
+    source         observation_source NOT NULL DEFAULT 'observed',
+    first_seen_run uuid  NOT NULL REFERENCES run_log (run_id),
+    last_seen_run  uuid  NOT NULL REFERENCES run_log (run_id),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
 
-    PRIMARY KEY (station_id, ts_utc) NOT ENFORCED
-)
-PARTITION BY DATE(ts_utc)
-CLUSTER BY station_id
-OPTIONS (
-    description = 'Curated observations, one row per (station, timestamp).',
-    require_partition_filter = TRUE
+    PRIMARY KEY (station_id, ts_utc)
 );
 
+CREATE INDEX observation_wide_time ON observation_wide (ts_utc DESC);
+
 -- ---------------------------------------------------------------------------
--- Units still cannot live in the row.
+-- Units cannot live in the row.
 --
 -- §10 requires recording the unit each value arrived in, and units are
--- per-metric: outdoor_vpd is inHg while outdoor_temperature is ºF. Options:
---   (a) 42 parallel *_unit columns  -> 84 columns, nearly all constant
+-- per-metric, not per-row: outdoor_vpd is inHg while outdoor_temperature is
+-- ºF. Three ways to model that, none good:
+--   (a) 42 parallel *_unit columns  -> 84 columns, mostly constant
 --   (b) one unit set per row        -> loses per-metric fidelity
---   (c) a metric-keyed side table   -> reintroduces a long table
--- (c) is chosen, which is worth noticing: the wide design needs a
--- metric-keyed table anyway. On BigQuery (a) is cheaper than it was on
--- Postgres — columnar storage barely notices 42 near-constant columns — but it
--- is still 84 columns to keep in sync by hand.
+--   (c) a side table keyed by metric -> reintroduces the long table
+-- (c) is chosen here as the least bad, which is worth noticing: the wide
+-- design needs a metric-keyed table anyway.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS ecowitt.observation_wide_units (
-    column_name STRING    NOT NULL,
-    metric      STRING    NOT NULL,
-    unit        STRING    NOT NULL,
-    valid_from  TIMESTAMP NOT NULL,
-    valid_to    TIMESTAMP,
-
-    PRIMARY KEY (column_name, valid_from) NOT ENFORCED
+CREATE TABLE observation_wide_units (
+    column_name text PRIMARY KEY,
+    metric      text NOT NULL REFERENCES metric_catalog (metric),
+    unit        text NOT NULL,
+    valid_from  timestamptz NOT NULL DEFAULT now(),
+    valid_to    timestamptz
 );
 
 -- ---------------------------------------------------------------------------
 -- Raw text is not preserved.
 --
 -- Option A keeps value_text (exact bytes) beside value_num. Doing that here
--- means 42 more STRING columns. Without them, a value that fails to parse can
--- only be NULL — indistinguishable from "sensor reported nothing", which is
--- precisely the ambiguity §10's no-unconditional-casts rule exists to prevent.
--- The raw JSON in raw_payload remains the fallback, so nothing is lost
--- permanently, but recovery means re-reading raw payloads rather than reading
--- the curated row.
+-- would mean 42 more text columns. The raw JSON in raw_payload remains the
+-- fallback, so nothing is lost permanently -- but recovering an unparseable
+-- value means re-reading raw_payload rather than reading the curated row, and
+-- a value that fails to parse can only be represented as NULL, which is
+-- indistinguishable from "sensor reported nothing".
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- Change detection: the column list, written out twice, forever.
--- ---------------------------------------------------------------------------
-
--- MERGE ecowitt.observation_wide AS t
--- USING ecowitt._staging_wide AS s
---   ON t.station_id = s.station_id AND t.ts_utc = s.ts_utc
---  AND DATE(t.ts_utc) BETWEEN @window_start_date AND @window_end_date
--- WHEN MATCHED AND (
---        t.outdoor_temperature IS DISTINCT FROM s.outdoor_temperature
---     OR t.outdoor_humidity    IS DISTINCT FROM s.outdoor_humidity
---     OR ...                                     -- x42, hand-maintained
--- ) THEN UPDATE SET
---     outdoor_temperature = s.outdoor_temperature,
---     ...                                        -- x42, hand-maintained
---     updated_at = CURRENT_TIMESTAMP()
--- WHEN NOT MATCHED THEN INSERT ROW;
+-- Change detection: no single-statement equivalent.
 --
--- §7's change_log is field-level, so emitting it requires knowing WHICH column
--- differed. That means either 42 UNION ALL branches comparing one column each,
--- or diffing the returned row in application code. Option A gets this from the
--- row identity itself.
+-- Option A's upsert reports insert/update/unchanged from one RETURNING clause.
+-- Here every changed column must be compared explicitly, and change_log needs
+-- one row per changed field -- so the column list is written out 42 times in
+-- the WHERE, and again in whatever emits change_log rows. Abridged:
+-- ---------------------------------------------------------------------------
+
+-- INSERT INTO observation_wide AS o (station_id, ts_utc, outdoor_temperature, ...)
+-- VALUES (...)
+-- ON CONFLICT (station_id, ts_utc) DO UPDATE
+--     SET outdoor_temperature = EXCLUDED.outdoor_temperature,
+--         ...                                        -- x42
+--         last_seen_run = EXCLUDED.last_seen_run,
+--         updated_at = now()
+--     WHERE o.outdoor_temperature IS DISTINCT FROM EXCLUDED.outdoor_temperature
+--        OR o.outdoor_humidity    IS DISTINCT FROM EXCLUDED.outdoor_humidity
+--        OR ...                                      -- x42, and every one must
+--                                                    -- be kept in sync forever
+-- RETURNING (xmax = 0) AS was_insert, o.*;
+--
+-- "Which field changed" then has to be recovered by diffing the returned row
+-- against the input in application code -- work the long form gets for free.
 
 -- ---------------------------------------------------------------------------
 -- Long view, for change_log joins and per-metric queries.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW ecowitt.observation_long AS
-SELECT station_id, ts_utc, metric, value_num, source
-FROM ecowitt.observation_wide,
-UNNEST([
-    STRUCT('outdoor.temperature' AS metric, outdoor_temperature AS value_num),
-    STRUCT('outdoor.humidity',              outdoor_humidity),
-    STRUCT('outdoor.dew_point',             outdoor_dew_point),
-    STRUCT('wind.wind_speed',               wind_speed),
-    STRUCT('wind.wind_gust',                wind_gust),
-    STRUCT('wind.wind_direction',           wind_direction),
-    STRUCT('pressure.absolute',             pressure_absolute),
-    STRUCT('solar_and_uvi.solar',           solar)
-    -- ... one STRUCT per metric, x42, hand-maintained
-]);
--- UNNEST of a struct array avoids the repeated table scan a UNION ALL unpivot
--- would cause — a genuine BigQuery advantage over the Postgres draft.
+CREATE VIEW observation_long AS
+SELECT station_id, ts_utc, 'outdoor.temperature' AS metric,
+       outdoor_temperature AS value_num, source
+FROM observation_wide
+UNION ALL
+SELECT station_id, ts_utc, 'outdoor.humidity', outdoor_humidity, source
+FROM observation_wide
+UNION ALL
+SELECT station_id, ts_utc, 'wind.wind_direction', wind_direction, source
+FROM observation_wide;
+-- ... one UNION ALL branch per metric, x42. Unlike Option A's pivot, this
+-- unpivot rescans the table once per branch unless materialised.
 
 -- ---------------------------------------------------------------------------
--- Adding a sensor: cheap on BigQuery, unlike Postgres.
+-- Adding a sensor: a migration, on a table holding training data.
 -- ---------------------------------------------------------------------------
 
--- ALTER TABLE ecowitt.observation_wide
---     ADD COLUMN soil_ch3_soilmoisture FLOAT64,
---     ADD COLUMN soil_ch3_ad           INT64;
---
--- Metadata-only: instant, no rewrite, no downtime, no backfill. But the
--- surrounding code still changes -- the MERGE SET list, the MERGE WHERE list,
--- the change-detection diff, observation_long, and every downstream view. And
--- rows written before the ALTER carry NULL, indistinguishable from "sensor
--- present but silent".
+-- ALTER TABLE observation_wide
+--     ADD COLUMN soil_ch3_soilmoisture double precision,
+--     ADD COLUMN soil_ch3_ad           integer;
+-- -- plus: update the upsert statement, the WHERE clause, the change-detection
+-- -- diff, observation_long, and every downstream view. Rows before the ALTER
+-- -- carry NULL, which is indistinguishable from "sensor present but silent".

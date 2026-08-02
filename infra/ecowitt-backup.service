@@ -1,0 +1,16 @@
+[Unit]
+Description=Ecowitt nightly database backup to GCS
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+Environment=DB_NAME=ecowitt
+# Set to your bucket: PROJECT_ID-ecowitt-backups
+Environment=BACKUP_BUCKET=CHANGEME-ecowitt-backups
+ExecStart=/opt/ecowitt/backup.sh
+# The script exits non-zero on any verification failure; systemd records that
+# as a failed unit, which is what a monitoring check should look for.
+StandardOutput=journal
+StandardError=journal

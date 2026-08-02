@@ -268,8 +268,8 @@ A short document, written for the user, containing:
 
 These are deliberately unanswered and must not be guessed:
 
-- [x] Database target — **BigQuery**, us-central1 (2026-08-02)
-- [x] Where the Phase 1 job runs — **Cloud Run job + Cloud Scheduler** (2026-08-02)
+- [x] Database target — **self-managed Postgres 16 on e2-micro**, us-central1 (2026-08-02)
+- [x] Where the Phase 1 job runs — **on the e2-micro alongside Postgres** (2026-08-02)
 - [ ] Pull cadence
 - [ ] Whether to bootstrap historical data, accepting mixed resolution
 - [ ] Resample interval and gap-fill policy
