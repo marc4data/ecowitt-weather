@@ -101,11 +101,16 @@ Row volume is not a concern: 42 metrics × 288 slots/day ≈ 12k rows/day, about
 
 ## 5. Fields needing a decision before schema design
 
-- **`soil_chN.ad`** — an unlabelled integer (unit `""`) shipped alongside
-  `soilmoisture`. Observed 149–151 on ch1, 129–131 on ch2, moving inversely to
-  moisture. It is very likely the raw ADC reading behind the percentage, but
-  that is inference, not observation. **Decide whether to store it**; if kept,
-  store it as an opaque integer and do not resample or interpolate it.
+- ✅ **`soil_chN.ad` — DECIDED 2026-08-02: keep.** An unlabelled integer
+  (unit `""`) shipped alongside `soilmoisture`. Observed 149–151 on ch1,
+  129–131 on ch2, moving inversely to moisture. Very likely the raw ADC reading
+  behind the percentage, but that is inference, not observation — so it is
+  stored as an **opaque integer**, never resampled or interpolated, and never
+  unit-converted. If the ADC↔percentage relationship is later established it
+  can be derived in a view; deriving it now would encode a guess as data.
+  Retaining it is cheap insurance: if `soilmoisture` turns out to be a lossy or
+  recalibrated projection of `ad`, the raw signal is the recoverable one, which
+  is the §10 argument for never discarding raw.
 - **`battery.*` is not one kind of thing.** `haptic_array_battery` and
   `soilmoisture_sensor_chN` are volts; `temp_humidity_sensor_chN` are unitless
   status codes that only ever read `0`. **Status codes must not be resampled or

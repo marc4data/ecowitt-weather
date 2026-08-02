@@ -426,7 +426,12 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
       returned would bake in a permanent 0.02–0.08 ºF disagreement that
       reconciliation (§9) could not distinguish from real drift. Metric is
       computed on read from the canonical imperial value.
-- [ ] **Resample interval and gap-fill rules** (§9)
+- [x] **`soil_chN.ad`** — decided 2026-08-02: **keep**, as an opaque integer.
+      Not resampled, not interpolated, not unit-converted. Its relationship to
+      `soilmoisture` is inferred, not observed; if it is ever established,
+      derive it in a view rather than encoding the guess at ingest.
+- [ ] **Resample interval and gap-fill rules** (§9) — note that `soil_chN.ad`
+      and the unitless `battery.*` status codes are excluded from resampling
 - [ ] **Retention policy for the local store** — presumed "keep everything," confirm
 - [ ] **Flooding data source** (Phase 3) — sensor, format, cadence all unknown
 - [x] **Python packaging/tooling** — decided 2026-08-01: stdlib `venv` + `pip`
