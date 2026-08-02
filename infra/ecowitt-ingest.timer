@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Ecowitt incremental ingestion hourly
+
+[Timer]
+OnCalendar=hourly
+# Offset off the hour: the API's own data is ~18 min stale, so asking at :00
+# reliably fetches a window whose newest slots are not populated yet.
+RandomizedDelaySec=180
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

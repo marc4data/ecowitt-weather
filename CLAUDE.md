@@ -2,9 +2,11 @@
 
 Persistent context for Claude Code working in this repository.
 
-> **Status: pre-implementation.** The schema is not yet known — see §3. Sections
-> marked `TBD` are unresolved. **Do not invent answers for them.** If a task
-> depends on an unresolved item, stop and ask.
+> **Status: Phase 1 ingesting.** Phase 0 complete (D1–D5 reviewed). Schema live
+> on `ecowitt-db`; hourly ingestion, daily reconciliation, nightly backup and a
+> 15-minute heartbeat are all running. Sections still marked `TBD` are
+> unresolved — **do not invent answers for them.** If a task depends on an
+> unresolved item, stop and ask.
 
 ---
 
@@ -516,9 +518,10 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 # recover MAC:       python -m discovery devices
 
 # discovery:      python -m discovery probe | sample | inventory | units
-# incremental run: TBD — Phase 1 ingestion job not yet written
-# backfill run:    TBD — chunk at 24h (D2)
-# reconcile run:   TBD — Phase 1
+# incremental:    python -m ingest incremental     # hourly, last 4h
+# reconcile:      python -m ingest reconcile       # daily, previous 24h in 12h chunks
+# backfill:       python -m ingest backfill --days 7
+# gap sweep:      python -m ingest gaps --days 30
 
 # --- live infrastructure (project ecowitt-504320) ---
 # ssh:        gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap

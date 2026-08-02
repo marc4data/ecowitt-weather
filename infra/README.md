@@ -91,9 +91,21 @@ Applied: `00_common.sql`, `option_a_long.sql` (long/tall chosen 2026-08-02),
 `metric_catalog_seed.sql` (42 metrics). All constraints verified to reject
 their violations — see `schema/verify_constraints.sql`.
 
-Timers installed and exercised: `ecowitt-backup.timer` (09:00 UTC) and
-`ecowitt-heartbeat.timer` (every 15 min). Both have run successfully against
-the live database.
+Four timers installed and exercised against the live database:
+
+| timer | schedule | purpose |
+|---|---|---|
+| `ecowitt-ingest` | hourly | incremental pull, last 4 h |
+| `ecowitt-reconcile` | 10:00 UTC | previous 24 h in 2 × 12 h chunks |
+| `ecowitt-backup` | 09:00 UTC | dump → verify → upload → verify |
+| `ecowitt-heartbeat` | every 15 min | staleness + dead-man's switch |
+
+Reconcile runs *after* the backup so a run that rewrites values is captured by
+the next backup rather than racing the current one.
+
+Ecowitt credentials live in Secret Manager (`ecowitt-application-key`,
+`ecowitt-api-key`, `ecowitt-mac`), fetched at runtime by `run_ingest.sh` into
+the process environment. They never touch disk on the VM.
 
 ## Monitoring — two silences, two policies
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Ecowitt daily reconciliation (previous 24h, 12h chunks)
+After=postgresql.service network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+WorkingDirectory=/opt/ecowitt/app
+ExecStart=/opt/ecowitt/app/run_ingest.sh reconcile
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,16 @@
+[Unit]
+Description=Ecowitt incremental ingestion (hourly, 4h window)
+After=postgresql.service network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+WorkingDirectory=/opt/ecowitt/app
+# Credentials come from Secret Manager at runtime, fetched by the VM's service
+# account. They are never written to disk on this box (§10).
+ExecStart=/opt/ecowitt/app/run_ingest.sh incremental
+StandardOutput=journal
+StandardError=journal
+# A failed run must stay failed and visible. No restart loop: the next hourly
+# firing is the retry, and the 4h window means one miss loses nothing.

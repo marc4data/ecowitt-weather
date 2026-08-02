@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Ecowitt reconciliation daily
+
+[Timer]
+# 10:00 UTC — after the 09:00 backup, so a reconciliation that rewrites values
+# is always captured by the NEXT backup rather than racing the current one.
+OnCalendar=*-*-* 10:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
