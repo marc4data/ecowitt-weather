@@ -1,0 +1,341 @@
+# CLAUDE.md
+
+Persistent context for Claude Code working in this repository.
+
+> **Status: pre-implementation.** The schema is not yet known — see §3. Sections
+> marked `TBD` are unresolved. **Do not invent answers for them.** If a task
+> depends on an unresolved item, stop and ask.
+
+---
+
+## 1. Goal
+
+A **simple, reliable Python utility** that moves Ecowitt weather station data into
+a persistent database with a logical schema, and does so accurately, repeatably,
+and observably.
+
+It owns *all* data movement and transformation for this system. Everything
+downstream reads from what this tool produces.
+
+Design values, in priority order:
+
+1. **Correctness** — data in the store must be trustworthy without manual audit.
+2. **Reliability** — unattended operation; failures are loud, not silent.
+3. **Simplicity** — the smallest thing that satisfies 1 and 2. Resist frameworks,
+   abstraction layers, and cleverness. This is a data pipeline, not a platform.
+4. **Observability** — every run and every change is logged and queryable.
+
+### In scope
+
+- Extraction from Ecowitt (see §5)
+- Landing raw payloads immutably
+- Normalization, unit handling, resampling to a fixed time grid
+- Idempotent loading — **write only when something actually changed**
+- Reconciliation passes that re-verify stored data against source
+- Derived tables and views for reporting and analytics
+- Run logging and change logging (§7)
+
+### Not in scope
+
+- Any dashboard or UI. Visualization is a separate concern reading from this DB.
+- Weather-condition alerting (this is not a warning system)
+- Model training or serving — this tool prepares the substrate, nothing more
+
+## 2. Roadmap
+
+| Phase | Scope |
+|---|---|
+| **0** | **Endpoint discovery and schema design** — current phase, see §3 |
+| **1** | Ecowitt weather ingestion — persistent store, instrumented |
+| **2** | Analytic/reporting tables and views |
+| **3** | Basement flooding data ingestion (source TBD) |
+| **4** | Feature substrate for predictive modeling — flooding is the target variable |
+
+Phase 4 is why point-in-time correctness matters from day one (§8). Do not defer it.
+
+## 3. ⚠️ Schema is UNKNOWN — discovery comes first
+
+**Nothing about the data shape has been established.** Ecowitt's API response
+structure, field names, units, null behavior, and which sensors report have not
+been observed.
+
+**The first deliverable is a discovery script, not a pipeline.** It should:
+
+- Call `/device/real_time` and `/device/history` with `call_back=all`
+- Persist raw responses verbatim to disk as dated samples (gitignored)
+- Emit an inventory: every field observed, its type, example values, null rate,
+  which sensors appear, what units are reported
+- Probe the `cycle_type` granularity question in §6 empirically — vary span
+  against `cycle_type=5min` and record the returned timestamp spacing
+- Record observed API error codes and any rate-limiting behavior
+
+Schema design happens *after* reviewing those samples with the user. Do not write
+DDL, ORM models, or dataclasses before then.
+
+## 4. Hardware and source
+
+| Item | Value |
+|---|---|
+| Console | Ecowitt HP2560 (7" TFT receiver) |
+| Console MAC | TBD — on console Weather Server page |
+| Sensors attached | TBD — enumerate during discovery |
+| Reporting interval to cloud | Default 1 min — confirm actual setting |
+| Console history/SD interval | TBD (1–240 min, selectable) |
+| ecowitt.net account | ✅ exists |
+| Application Key / API Key | ✅ generated (Private Center) |
+| Station first-report date | TBD — needed to interpret retention probes |
+
+Credentials exist, so discovery (§3) is unblocked. The console MAC is still needed
+as a request parameter — read it off the console's Weather Server page.
+
+Note: the HP2560 pushes outbound only. It does **not** expose a local polling API.
+
+## 5. Ingestion approach
+
+**v1 is pull-based.** A scheduled Python job calls the Ecowitt Cloud API v3 and
+loads results.
+
+Rationale: no inbound network exposure, no always-on listener on the LAN, no
+port-80 concerns, and it matches the upsert/change-detection model the tool
+needs. The cloud retention ceiling (§6) is not binding as long as the job runs
+frequently — pulling within the 5-minute-resolution window and storing locally
+accumulates full-resolution history indefinitely.
+
+- Base URL: `https://api.ecowitt.net/api/v3`
+- Auth: Application Key + API Key, created in Private Center on ecowitt.net
+- ⚠️ **DECISION NOT MADE:** whether to add a push listener later. Do not build for
+  it speculatively, but do not make it structurally impossible either — keep
+  ingestion adapters separable from load and transform.
+
+Fallback path, not automated: the console writes basic *and* extra-sensor data to
+a micro SD card (max 32 GB, FAT32) at the configured interval, exportable as CSV.
+Useful for disaster recovery. Console internal memory holds basic data only.
+
+### 5.1 API mechanics
+
+Derived from the reference implementation (§5.3) and its inline docs. Dates to
+roughly 2022–23 — **treat as a hypothesis to confirm during discovery**, not as
+current documentation.
+
+Endpoints:
+
+- `GET /device/real_time`
+- `GET /device/history`
+
+Common parameters: `application_key`, `api_key`, `mac`, `call_back`.
+
+- `call_back` selects fields: `all`, or a comma-separated list such as
+  `outdoor.temperature,indoor.temperature`. **Discovery uses `all`.**
+
+History-only parameters: `start_date`, `end_date` (format `%Y-%m-%d %H:%M:%S`),
+and `cycle_type`.
+
+- `cycle_type` accepts `auto`, `5min`, `30min`, `4hour`, `1day` — granularity can
+  be **requested explicitly** rather than inferred from span length. This is the
+  key lever for backfill (§6).
+
+Unit selection is per-request, not just a console setting:
+
+```
+&temp_unitid=..&pressure_unitid=..&wind_speed_unitid=..
+&rainfall_unitid=..&solar_irradiance_unitid=..
+```
+
+ID values documented at `doc.ecowitt.net/web/#/apiv3en?page_id=17`.
+**Pin these explicitly in config, and assert that the returned `unit` matches what
+was requested.** Do not accept whatever arrives — a silent unit change corrupts
+history in a way that is very hard to detect later.
+
+⚠️ The concrete ID values are **not yet known** — the doc site blocks automated
+fetching. They must be read from a browser and recorded before D4 (§8 of the
+Phase 0 requirements) can run. Do not guess them.
+
+Responses carry a `code` field. Check it; a 200 HTTP status does not imply success.
+
+### 5.2 Response shapes (expected)
+
+**Real-time** — nested; leaf nodes carry value, unit, and time:
+
+```
+data.outdoor.temperature = {'time': <epoch>, 'unit': '℃', 'value': '13.7'}
+```
+
+**History** — unit stated once per metric, then a timestamp→value map:
+
+```
+data.outdoor.temperature = {'unit': '℃', 'list': {<epoch>: '13.7', ...}}
+```
+
+Note the history shape is already effectively long/tall. A wide curated table
+would mean pivoting against the source's natural format — weigh that when
+deciding table shape (§11).
+
+Numeric values arrive as **strings**. Cast defensively; do not assume every field
+parses as a float.
+
+### 5.3 Reference implementation — mechanics only
+
+`github.com/pgarmyn/ecowitt_net` (~115 lines) is a useful reference for request
+construction and response structure.
+
+**Do not copy its patterns.** Four specific things in it violate this project's
+requirements:
+
+1. `datetime.fromtimestamp(t)` with no timezone — converts epoch to host-local
+   time. Violates §10 (store UTC) and breaks across DST or on a retimed host.
+   Use `datetime.fromtimestamp(t, tz=timezone.utc)`.
+2. Unconditional `float()` on every value — raises on nulls or non-numerics.
+   Quarantine instead (§10).
+3. Exceptions swallowed into a return dict with `code: -1` plus a `print()`.
+   A scheduled job would exit zero on total failure. Violates "fail loudly".
+4. Credentials hardcoded in a committed source file. Violates §10.
+
+## 6. Hard constraints
+
+**Ecowitt cloud downsamples with age:**
+
+| Age of data | Stored interval |
+|---|---|
+| Past 3 months | 5 min |
+| Past 1 year | 30 min |
+| Past 2 years | 4 hours |
+
+**Returned granularity also varies with query span:**
+
+| Query span | Returned interval |
+|---|---|
+| By day | 5 min |
+| By week | 30 min |
+| By month | 4 hours |
+| By year | 1 day |
+
+Consequences:
+
+- The 5-minute window is a **rolling 3 months**. Fall behind and that resolution
+  is gone permanently. Gap detection is therefore time-critical, not cosmetic.
+- `cycle_type=5min` can be requested explicitly (§5.1), so granularity is not
+  purely a function of span. But the reference implementation notes that valid
+  values depend on timespan.
+- ⚠️ **UNVERIFIED — test first in discovery (§3):** at what span does
+  `cycle_type=5min` stop being honored? Does the API reject the request, or
+  silently return coarser data? **Silent downgrade is the dangerous case** — it
+  would produce gap-free-looking data at the wrong resolution. Determine the
+  maximum safe chunk size empirically, then make backfill chunk to it and
+  **verify returned timestamp spacing on every response** rather than trusting
+  the request.
+- The API doc site blocks automated fetching — open in a browser.
+
+## 7. Instrumentation — required, not optional
+
+Two tables, populated by every execution.
+
+### `run_log`
+
+`run_id` · trigger (scheduled / manual / backfill) · mode · window requested ·
+started_at · ended_at · status · rows fetched / inserted / updated / unchanged /
+rejected · error detail
+
+A run that changed nothing still writes a row. Absence of a row means the job
+didn't run — that distinction is the whole point.
+
+### `change_log`
+
+natural key · field · old value · new value · `run_id` · changed_at · reason
+
+This is what makes "verify accurate production data" auditable rather than
+aspirational, and it is the mechanism for point-in-time reconstruction (§8).
+
+### Change detection
+
+Compare before write — row hash or field-level diff. **Never issue a blind
+upsert.** "Unchanged" must be a countable outcome, because a reconciliation run
+that reports thousands of updates is a signal something is wrong.
+
+## 8. Point-in-time correctness
+
+Because flooding prediction (Phase 4) will use weather data as features, a
+corrected historical value that silently overwrites the original creates training
+data that was not available at prediction time. That is leakage, and it will not
+be visible in model metrics until production.
+
+Requirements:
+
+- **Raw landing is append-only and immutable.** Never mutate a landed payload.
+- The curated table plus `change_log` must be able to answer: *what did the
+  record for timestamp T look like as of date D?*
+- Corrections are recorded as changes, never as in-place overwrites without trace.
+
+## 9. Resampling and reconciliation
+
+Two distinct operations. Keep them separate in code and in the run log.
+
+**Resample** — normalize observations onto a fixed time grid. Modeling requires a
+regular grid; the source does not reliably provide one. Interpolation and
+gap-fill rules are TBD and must be explicit, recorded per row, and never silently
+applied. A synthesized value must be distinguishable from an observed one.
+
+**Reconcile** — re-query a past window and compare against what is stored.
+Discrepancies write to `change_log` with reason. Cadence TBD.
+
+## 10. Non-negotiables
+
+- **Never discard raw payloads.** Store the original response verbatim alongside
+  any parsed form. Parsing bugs are recoverable; discarded data is not.
+- **Store UTC.** The console has its own timezone setting; assume it disagrees.
+- **Record the unit each value arrived in.** Console units are user-configurable
+  (°F/°C, in/mm, inHg/hPa/mmHg) and can be changed after the fact.
+- **Idempotent loads.** Backfill and incremental runs will overlap.
+- **Rejected rows are quarantined, not dropped.** Out-of-range, malformed,
+  duplicate-timestamp, and clock-drift rows go to a quarantine table with reason.
+- **Fail loudly.** A silently dead scheduled job is the primary risk to this
+  project.
+- **Secrets never enter the repo.** Application Key, API Key, and DB/service
+  credentials come from environment or a secret manager. Do not write them into
+  config files, defaults, or test fixtures.
+- **Tests use recorded fixtures, never the live API.**
+
+## 11. Open decisions — ASK, do not assume
+
+- [ ] **Database target.** GCP mentioned (BigQuery vs. Cloud SQL Postgres has
+      large consequences for cost, upsert semantics, and change-detection
+      approach). Not decided.
+- [ ] **Where the job runs** — local host, VM, Cloud Run, Cloud Functions?
+- [ ] **Schedule and cadence** — for incremental pulls and for reconciliation
+- [ ] **Table shape** — long/tall (`station, ts_utc, metric, value, unit`) vs.
+      wide. Long tolerates new sensors without migration; wide is easier to query.
+      Decide after discovery (§3).
+- [ ] **Resample interval and gap-fill rules** (§9)
+- [ ] **Retention policy for the local store** — presumed "keep everything," confirm
+- [ ] **Flooding data source** (Phase 3) — sensor, format, cadence all unknown
+- [x] **Python packaging/tooling** — decided 2026-08-01: stdlib `venv` + `pip`
+      (not `uv`), `ruff` for lint/format, `pytest` for tests.
+
+## 12. Reference documentation
+
+- Ecowitt Cloud API v3 — `https://doc.ecowitt.net/web/#/apiv3en?page_id=1`
+- HP2560 User Manual (17 Nov 2025) —
+  `https://oss.ecowitt.net/uploads/20251121/HP2560UserManual.pdf`
+  - §2.7.3 WiFi (2.4 GHz only) · §5.3 ecowitt.net registration ·
+    §5.5 customized server · §4.1.14 interval · §4.4.6 SD backup
+- WS View Plus & Web UI Manual —
+  `https://oss.ecowitt.net/uploads/20250408/WS View Plus & Web UI Manual (Generic).pdf`
+- Postman collection — `postman.com/barcar/ecowitt-cloud-api`
+- Python reference impl — `github.com/pgarmyn/ecowitt_net` — **mechanics only,
+  see §5.3 for what not to copy**
+- Community wiki — `meshka.eu/Ecowitt/dokuwiki`
+
+## 13. Commands
+
+```bash
+# install:        python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+# test:           pytest
+# lint:           ruff check . && ruff format --check .
+
+# credential check:  python -m discovery check
+# recover MAC:       python -m discovery devices
+
+# discovery run:  TBD — probe (D2), sample/inventory (D3), units (D4) not yet built
+# incremental run: TBD — Phase 1
+# backfill run:    TBD — Phase 1
+# reconcile run:   TBD — Phase 1
+```

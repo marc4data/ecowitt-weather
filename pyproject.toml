@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecowitt-discovery"
+version = "0.0.0"
+description = "Phase 0 discovery tooling for the Ecowitt weather data pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# UP017 rewrites `timezone.utc` to the `datetime.UTC` alias. Both project docs
+# state the rule literally as `tz=timezone.utc` (PHASE0 §11, CLAUDE.md §5.3),
+# and matching the written guardrail is worth more here than the alias.
+ignore = ["UP017"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

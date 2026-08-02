@@ -1,0 +1,23 @@
+# Secrets — never committed
+.env
+
+# Raw API captures: large, credential-bearing metadata, regenerable.
+# samples/reports/ is deliberately NOT ignored — D2–D5 are the Phase 0
+# deliverable and must be reviewable in history.
+samples/raw/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
