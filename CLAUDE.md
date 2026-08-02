@@ -424,14 +424,20 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 
 ## 11. Open decisions — ASK, do not assume
 
-- [ ] **Database target.** GCP mentioned (BigQuery vs. Cloud SQL Postgres has
-      large consequences for cost, upsert semantics, and change-detection
-      approach). Not decided.
-- [ ] **Where the job runs** — local host, VM, Cloud Run, Cloud Functions?
+- [x] **Database target** — decided 2026-08-02: **Cloud SQL for PostgreSQL**.
+      ~4.4M rows/yr is small; the workload is upsert- and change-detection-heavy,
+      which is where BigQuery is weakest (costly quota-limited MERGE, streaming
+      buffer complicating read-after-write). BigQuery remains sensible as a
+      Phase 4 export target, not as the curated store.
+- [x] **Where the job runs** — decided 2026-08-02: **Cloud Run job + Cloud
+      Scheduler**. Chosen for §10's "a silently dead scheduled job is the
+      primary risk": a sleeping workstation is exactly that failure mode, and a
+      missing `run_log` row is only a signal if the runner was supposed to be up.
 - [ ] **Schedule and cadence** — for incremental pulls and for reconciliation
-- [ ] **Table shape** — long/tall (`station, ts_utc, metric, value, unit`) vs.
-      wide. Long tolerates new sensors without migration; wide is easier to query.
-      Decide after discovery (§3).
+- [ ] **Table shape** — ⏳ awaiting your call from real DDL. Both schemas are
+      drafted and parse-checked: `schema/option_a_long.sql`,
+      `schema/option_b_wide.sql`, compared in `schema/COMPARISON.md`.
+      Recommendation is Option A (long store, wide view).
 - [x] **Units to pin** — decided 2026-08-02: **imperial is canonical, metric is a
       derived view**. Pin `temp_unitid=2` (`ºF`), `pressure_unitid=4` (`inHg`),
       `wind_speed_unitid=9` (`mph`), `rainfall_unitid=13` (`in`, `in/hr`),

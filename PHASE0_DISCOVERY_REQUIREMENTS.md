@@ -268,8 +268,8 @@ A short document, written for the user, containing:
 
 These are deliberately unanswered and must not be guessed:
 
-- [ ] Database target — BigQuery vs. Cloud SQL Postgres vs. local Postgres
-- [ ] Where the Phase 1 job runs, and how it is scheduled
+- [x] Database target — **Cloud SQL for PostgreSQL** (2026-08-02)
+- [x] Where the Phase 1 job runs — **Cloud Run job + Cloud Scheduler** (2026-08-02)
 - [ ] Pull cadence
 - [ ] Whether to bootstrap historical data, accepting mixed resolution
 - [ ] Resample interval and gap-fill policy

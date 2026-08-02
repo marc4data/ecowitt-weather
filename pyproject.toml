@@ -16,6 +16,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    # Parse-checks schema/*.sql. No Postgres is available locally, so this is
+    # syntax validation only -- it is not a substitute for executing the DDL.
+    "sqlglot>=25.0",
 ]
 
 [tool.setuptools]
