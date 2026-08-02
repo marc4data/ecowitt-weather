@@ -2,8 +2,9 @@
 -- Target: self-managed PostgreSQL 16 on a GCP e2-micro VM, us-central1
 -- (decided 2026-08-02). Vanilla Postgres -- nothing here is Cloud SQL specific.
 --
--- STATUS: not yet executed. No instance exists yet; parse-checked only.
--- Run it against a scratch database before trusting it.
+-- STATUS: EXECUTED 2026-08-02 against ecowitt-db (PostgreSQL 16.14), applied
+-- with ON_ERROR_STOP=1, 21 statements, no errors. All six constraints were
+-- then verified to reject their violations -- see verify_constraints.sql.
 --
 -- Everything here is independent of the long-vs-wide decision.
 

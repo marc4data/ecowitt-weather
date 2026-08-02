@@ -8,7 +8,8 @@
 -- Every line must read 'rejected, as required'. A WARNING means a rule
 -- that was supposed to be structural has become advisory.
 --
--- Verified passing 2026-08-02 against PostgreSQL 16.14 on ecowitt-db.
+-- STATUS: EXECUTED 2026-08-02 against ecowitt-db (PostgreSQL 16.14).
+-- All six checks reported 'rejected, as required'.
 BEGIN;
 
 INSERT INTO run_log (run_id, trigger, mode, status, started_at)

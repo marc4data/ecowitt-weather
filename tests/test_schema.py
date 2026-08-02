@@ -37,6 +37,15 @@ def test_schema_parses_as_postgres(path: Path):
 
 
 @pytest.mark.parametrize("path", SCHEMA_FILES, ids=lambda p: p.name)
-def test_schema_carries_unexecuted_warning(path: Path):
-    """Neither option may lose its 'not yet executed' caveat by accident."""
-    assert "not yet executed" in path.read_text(encoding="utf-8").lower()
+def test_schema_declares_execution_status(path: Path):
+    """Every schema file must state whether it has actually been run.
+
+    Originally this asserted "not yet executed" was present, which became a
+    false claim the moment 00_common.sql was applied to ecowitt-db. The point
+    was never the specific wording — it was that a reader can tell parse-checked
+    from executed without guessing.
+    """
+    text = path.read_text(encoding="utf-8").lower()
+    assert "not yet executed" in text or "executed 2026" in text, (
+        f"{path.name} does not declare whether it has been executed"
+    )
