@@ -134,6 +134,39 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_units(args: argparse.Namespace) -> int:
+    """Unit parameter verification (D4 §8). Writes samples/reports/api_behavior.md."""
+    from datetime import datetime, timezone
+
+    from . import units
+
+    credentials = Credentials.from_env(require_mac=True)
+    client = EcowittClient(credentials, args.raw_dir)
+
+    print("Discovering unit parameter ranges and sweeping them ...")
+    families = units.run(client)
+
+    for fam in families:
+        if not fam.discovered:
+            print(f"  {fam.param:26} range not discovered — {fam.range_message!r}")
+            continue
+        print(f"  {fam.param:26} valid {fam.low}-{fam.high}  {fam.verdict}")
+        for obs in fam.observations:
+            print(f"      {obs.unit_id:>2} -> {', '.join(obs.distinct_units) or '—'}")
+
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        units.render_markdown(families, generated_at=datetime.now(timezone.utc)),
+        encoding="utf-8",
+    )
+    print(f"\nReport: {args.report}")
+
+    ignored = [f.param for f in families if f.discovered and f.observable and not f.honored]
+    if ignored:
+        print(f"WARNING: accepted but ignored: {', '.join(ignored)}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="discovery", description=__doc__)
     parser.add_argument(
@@ -165,6 +198,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="console UTC offset in hours (e.g. -5). Detected automatically if omitted.",
     )
     probe_parser.set_defaults(func=cmd_probe)
+
+    units_parser = sub.add_parser("units", help="unit parameter verification (D4 §8)")
+    units_parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("samples/reports/api_behavior.md"),
+        help="where the D4 report is written",
+    )
+    units_parser.set_defaults(func=cmd_units)
     return parser
 
 

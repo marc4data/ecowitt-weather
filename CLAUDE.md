@@ -191,14 +191,32 @@ Unit selection is per-request, not just a console setting:
 &rainfall_unitid=..&solar_irradiance_unitid=..
 ```
 
-ID values documented at `doc.ecowitt.net/web/#/apiv3en?page_id=17`.
+✅ **ID values discovered empirically 2026-08-02** (`samples/reports/api_behavior.md`).
+Not read from the docs — obtained by sending an out-of-range value and reading the
+range back out of the API's own error message, then sweeping it:
+
+| parameter | IDs | mapping |
+|---|---|---|
+| `temp_unitid` | 1–2 | 1 = `℃` (U+2103) · 2 = `ºF` (U+00BA) |
+| `pressure_unitid` | 3–5 | 3 = `hPa` · 4 = `inHg` · 5 = `mmHg` |
+| `wind_speed_unitid` | 6–11 | 6 = `m/s` · 7 = `km/h` · 8 = `knots` · 9 = `mph` · 10 = `BFT` · 11 = `fpm` |
+| `rainfall_unitid` | 12–13 | 12 = `mm` / `mm/hr` · 13 = `in` / `in/hr` |
+| `solar_irradiance_unitid` | 14–16 | 14 = `lx` · 15 = `fc` · 16 = `W/m²` |
+| `capacity_unitid` | 24–26 | WFC/AC1100 sub-devices only; not observable here |
+
+All five applicable parameters are genuinely honored. **IDs 17–23 are unaccounted
+for**, so unit parameters exist that this project has not identified.
+
 **Pin these explicitly in config, and assert that the returned `unit` matches what
 was requested.** Do not accept whatever arrives — a silent unit change corrupts
 history in a way that is very hard to detect later.
 
-⚠️ The concrete ID values are **not yet known** — the doc site blocks automated
-fetching. They must be read from a browser and recorded before D4 (§8 of the
-Phase 0 requirements) can run. Do not guess them.
+⚠️ **The API is not self-consistent about degree signs.** `temp_unitid=1` returns
+`℃` (U+2103 DEGREE CELSIUS) but `temp_unitid=2` returns `ºF` (U+00BA MASCULINE
+ORDINAL INDICATOR + `F`) — two conventions from one parameter. The published
+example response also uses `℉` (U+2109) for a sub-device alongside `ºF` for the
+main groups, and mixes `µ` (U+00B5) with `μ` (U+03BC). **Never normalise a unit
+string.** Compare and store exact bytes.
 
 Responses carry a `code` field. Check it; a 200 HTTP status does not imply success.
 

@@ -44,7 +44,7 @@ user:
 | D1 | Raw response samples, verbatim | `samples/raw/` | ✅ accumulating |
 | D2 | Granularity probe results | `samples/reports/granularity.md` | ✅ done 2026-08-02 |
 | D3 | Field inventory | `samples/reports/field_inventory.md` | ☐ |
-| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` | ☐ blocked on unit IDs (§8) |
+| D4 | Observed API behavior notes | `samples/reports/api_behavior.md` | ◐ §8 units done; §9 notes pending |
 | D5 | Written recommendation on table shape | `samples/reports/findings.md` | ☐ |
 
 **Schema design does not begin until the user has reviewed these.**
@@ -210,9 +210,10 @@ Units are request parameters, not just console settings.
 - Note the exact unit strings returned, including character encoding — these will
   become stored values and must round-trip cleanly.
 
-⚠️ **Blocked:** the concrete ID values are not known and the doc site blocks
-automated fetching. They must be read from a browser and recorded before this
-step can run. Do not guess them.
+✅ **Resolved 2026-08-02, without the doc.** `python -m discovery units`
+discovers each parameter's valid range from the API's own error message, sweeps
+it, and records the exact unit string every ID produces. Results in
+`samples/reports/api_behavior.md`; mapping mirrored into `CLAUDE.md` §5.1.
 
 ## 9. API behavior notes (D4)
 
