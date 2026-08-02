@@ -1,0 +1,16 @@
+[Unit]
+Description=Ecowitt pipeline heartbeat (staleness + dead-man's switch)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+Environment=DB_NAME=ecowitt
+# Thresholds. MAX_RUN_AGE_MIN should tighten once pull cadence is decided
+# (CLAUDE.md §11) — 120 is deliberately loose so a single missed pull is not
+# an incident.
+Environment=MAX_RUN_AGE_MIN=120
+Environment=MAX_BACKUP_AGE_MIN=1560
+ExecStart=/opt/ecowitt/heartbeat.sh
+StandardOutput=journal
+StandardError=journal

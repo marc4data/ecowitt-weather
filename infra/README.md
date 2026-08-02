@@ -87,16 +87,45 @@ liability of self-managing.
 | backups | `gs://ecowitt-504320-ecowitt-backups`, 35-day lifecycle |
 | SSH | IAP tunnel only (`35.235.240.0/20`) |
 
-`schema/00_common.sql` is applied. All six constraints were verified to reject
+Applied: `00_common.sql`, `option_a_long.sql` (long/tall chosen 2026-08-02),
+`metric_catalog_seed.sql` (42 metrics). All constraints verified to reject
 their violations — see `schema/verify_constraints.sql`.
 
-The curated table is **not** applied: the long-vs-wide decision is still open.
+Timers installed and exercised: `ecowitt-backup.timer` (09:00 UTC) and
+`ecowitt-heartbeat.timer` (every 15 min). Both have run successfully against
+the live database.
+
+## Monitoring — two silences, two policies
+
+Colocating the job removed Cloud Scheduler, whose failures were visible in the
+console. A systemd timer that stops firing is silent, and §10 calls that the
+project's primary risk. Two failure modes need two mechanisms:
+
+| failure | mechanism | policy |
+|---|---|---|
+| Box alive, data stale | `heartbeat.sh` emits an ERROR log entry | *pipeline reporting unhealthy* |
+| Box dead, timer stopped, Postgres gone | **nothing is emitted at all** | *pipeline is not reporting* — fires on metric **absence** |
+
+The second is the one that matters and the one an error-only alert would miss:
+a dead machine produces no errors, just silence and a green dashboard. So the
+heartbeat emits on **every** run, healthy or not, and the absence of those
+entries is itself the alarm — the same argument §7 makes for `run_log`.
+
+Set up with [`create_monitoring.sh`](create_monitoring.sh). It uses the
+Monitoring REST API rather than `gcloud alpha/beta monitoring`, because those
+component groups are not installed and `gcloud components install` is disabled
+on a Homebrew-managed CLI — depending on them would mean either a broken script
+or modifying the operator's toolchain.
+
+**Verify the dead-man's switch rather than trusting it:**
+
+```bash
+gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap \
+  --command='sudo systemctl stop ecowitt-heartbeat.timer'
+# expect an email in ~1h, then start it again
+```
+
+Alerts go to `marc4data@gmail.com`. **Confirm the subscription in your inbox** —
+an unconfirmed channel silently delivers nothing.
 
 ## Still open
-
-**Monitoring.** The earlier "Cloud Run + Cloud Scheduler" decision is
-superseded — with Postgres on this VM, running the job here too removes a VPC
-connector, an egress path, and the database password. But it also removes the
-external scheduler whose failures were visible in GCP. A systemd timer that
-stops firing is silent, which is §10's primary risk. A heartbeat check against
-`run_log` and `backup_log` is needed and is not built yet.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Ecowitt heartbeat every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+# Absence of these log entries is the dead-man's switch, so the interval must
+# stay comfortably shorter than the Cloud Monitoring absence threshold (1h).
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

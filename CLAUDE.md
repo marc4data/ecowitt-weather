@@ -443,15 +443,9 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
       Scheduler's externally-visible failures, so a heartbeat check against
       `run_log` is required — see infra/README.md.
 - [ ] **Schedule and cadence** — for incremental pulls and for reconciliation
-- [ ] **Table shape** — ⏳ awaiting your call from real DDL. Both schemas are
-      drafted and parse-checked: `schema/option_a_long.sql`,
-      `schema/option_b_wide.sql`, compared in `schema/COMPARISON.md`.
-      Recommendation is still Option A (long store, wide view), but on a much
-      narrower margin than on Postgres: BigQuery's free `ADD COLUMN`, columnar
-      storage, and unenforced FKs each removed an argument that favoured long.
-      What remains decisive is that `change_log` is field-level by §7's own
-      definition, so long's row identity and the audit trail's key are the same
-      tuple.
+- [x] **Table shape** — decided 2026-08-02: **long/tall** (`observation`), with
+      `observation_wide` and `observation_wide_metric` as derived views.
+      Applied to ecowitt-db. `metric_catalog` seeded with all 42 metrics.
 - [x] **Units to pin** — decided 2026-08-02: **imperial is canonical, metric is a
       derived view**. Pin `temp_unitid=2` (`ºF`), `pressure_unitid=4` (`inHg`),
       `wind_speed_unitid=9` (`mph`), `rainfall_unitid=13` (`in`, `in/hr`),
@@ -499,8 +493,16 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 # credential check:  python -m discovery check
 # recover MAC:       python -m discovery devices
 
-# discovery run:  TBD — probe (D2), sample/inventory (D3), units (D4) not yet built
-# incremental run: TBD — Phase 1
-# backfill run:    TBD — Phase 1
+# discovery:      python -m discovery probe | sample | inventory | units
+# incremental run: TBD — Phase 1 ingestion job not yet written
+# backfill run:    TBD — chunk at 24h (D2)
 # reconcile run:   TBD — Phase 1
+
+# --- live infrastructure (project ecowitt-504320) ---
+# ssh:        gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap
+# psql:       sudo -u ecowitt psql ecowitt
+# timers:     systemctl list-timers 'ecowitt-*'
+# backup now: sudo systemctl start ecowitt-backup.service
+# heartbeat:  sudo -u ecowitt DB_NAME=ecowitt /opt/ecowitt/heartbeat.sh
+# constraints: sudo -u ecowitt psql -q ecowitt -f verify_constraints.sql
 ```
