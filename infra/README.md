@@ -71,10 +71,28 @@ Postgres listens on localhost only, so a GUI needs an SSH tunnel. There is no
 open database port and this does not add one.
 
 ```bash
-# leave running while you use the GUI
-gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap -- -N -L 5433:localhost:5432
-gcloud secrets versions access latest --secret=ecowitt-readonly-password
+./infra/tunnel.sh            # opens it, waits until it truly accepts connections
+./infra/tunnel.sh --check    # is it up?
 ```
+
+Use [`tunnel.sh`](tunnel.sh) rather than the raw gcloud command. Run on the VM
+or in Cloud Shell, the raw command fails with an opaque IAM error — *Required
+'compute.instances.get' permission* — which says nothing about the actual
+problem, namely that you are not on your workstation. The shell prompt looks
+identical in all three places. The script refuses to run anywhere but a
+workstation and says why, and it waits for the port to genuinely accept a
+connection rather than returning the instant `ssh` forks: "the command didn't
+error" and "pgAdmin can connect" are not the same thing.
+
+Telling the machines apart by hand:
+
+| | workstation | VM |
+|---|---|---|
+| hostname | `Marcs-MacBook-Pro.local` | `ecowitt-db` |
+| home | `/Users/marcalexander` | `/home/marcalexander` |
+| gcloud identity | `marc4data@gmail.com` | `ecowitt-vm@…gserviceaccount.com` |
+
+On the VM no tunnel is needed at all — `sudo -u ecowitt psql ecowitt`.
 
 pgAdmin / DBeaver: `localhost:5433`, database `ecowitt`, user `ecowitt_ro`.
 
