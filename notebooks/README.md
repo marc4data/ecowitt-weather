@@ -8,9 +8,22 @@ hour × metric table for yesterday and today.
 
 ```bash
 pip install -e ".[notebook]"
+
+# One-time: register the venv as a kernel Jupyter can see.
+# Needed because Anaconda ships its own Jupyter and its own Python, and that
+# Python has none of this project's packages. Without this the notebook fails
+# with a bare `ModuleNotFoundError: No module named 'psycopg'`, which points at
+# a missing package when the real problem is the wrong interpreter.
+.venv/bin/python -m ipykernel install --user --name ecowitt \
+    --display-name "Python (ecowitt)"
+
 ./infra/tunnel.sh          # in another terminal, leave running
 jupyter lab notebooks/explore.ipynb
 ```
+
+The notebook defaults to the **Python (ecowitt)** kernel. If you land on another
+one, switch via *Kernel > Change Kernel*. The first cell checks and fails with
+that instruction rather than an import error.
 
 The password comes from `ECOWITT_RO_PASSWORD` if set, otherwise Secret Manager.
 It is never stored in the notebook.
