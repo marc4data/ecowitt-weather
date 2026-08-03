@@ -21,3 +21,9 @@ dist/
 
 # macOS
 .DS_Store
+
+# Executed notebooks: large, full of data outputs, and regenerable.
+# The source notebook under notebooks/ is what is tracked.
+notebooks/executed.ipynb
+notebooks/*-executed.ipynb
+.ipynb_checkpoints/

@@ -21,6 +21,8 @@ dev = [
     # syntax validation only -- it is not a substitute for executing the DDL.
     "sqlglot>=25.0",
 ]
+# Exploration only -- nothing in src/ingest or src/discovery imports these.
+notebook = ["pandas>=2.0", "jupyter>=1.0", "ipykernel>=6.0"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
