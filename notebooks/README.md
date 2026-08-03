@@ -21,17 +21,28 @@ pip install -e ".[notebook]"
 jupyter lab notebooks/explore.ipynb
 ```
 
-The notebook defaults to the **Python (ecowitt)** kernel. If you land on
-another one — this machine has Anaconda's Python and several other project
-venvs — switch it:
+### Kernels
+
+**It runs on any Python 3.12 kernel.** The first cell checks whether the
+current interpreter has the dependencies and, if not, adds this project's
+`.venv/site-packages` to `sys.path` — safe only when the Python versions match
+exactly, because compiled extensions like `psycopg` are ABI-specific. It says
+loudly when it does this.
+
+That fallback exists because pinning a kernel in the notebook does not stick:
+**VS Code writes the selected kernel back into the `.ipynb` file**, so whatever
+you last ran with overwrites the pin. On a machine with Anaconda plus several
+project venvs, that turns into a loop.
+
+Selecting the right kernel is still cleaner, and avoids mixing two
+environments' packages in one process:
 
 * **VS Code:** click the kernel name in the notebook's **top-right corner** →
   *Select Another Kernel…* → *Jupyter Kernel…* → **Python (ecowitt)**
 * **JupyterLab:** *Kernel > Change Kernel > Python (ecowitt)*
 
-The first cell checks the interpreter and prints the path it is actually
-running on, rather than letting you hit a bare `ModuleNotFoundError` that
-blames a missing package when the real problem is the wrong Python.
+`.vscode/settings.json` points this workspace's default interpreter at
+`.venv`, so new notebooks and terminals start in the right place.
 
 The password comes from `ECOWITT_RO_PASSWORD` if set, otherwise Secret Manager.
 It is never stored in the notebook.
