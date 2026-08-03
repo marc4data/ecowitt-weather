@@ -83,8 +83,17 @@ fi
 
 # --- open it --------------------------------------------------------------
 echo "Opening tunnel localhost:$LOCAL_PORT -> $INSTANCE:$REMOTE_PORT ..."
+# -n redirects ssh's stdin from /dev/null. Without it, ssh keeps stdin open
+# even though -N means there is no remote command, and the tunnel dies with
+# "client_loop: send disconnect: Broken pipe" the moment stdin closes -- which
+# happens whenever this runs detached, from a script, or under a supervisor.
+# It survives in an interactive terminal only because stdin is a tty there.
+# -o ServerAliveInterval keeps an idle forward from being reaped by a NAT or
+# firewall timeout, which is the other way a long-lived tunnel dies quietly.
 gcloud compute ssh "$INSTANCE" --zone="$ZONE" --tunnel-through-iap --quiet \
-    -- -N -L "$LOCAL_PORT:localhost:$REMOTE_PORT" &
+    -- -N -n \
+       -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+       -L "$LOCAL_PORT:localhost:$REMOTE_PORT" </dev/null &
 SSH_PID=$!
 trap 'kill $SSH_PID 2>/dev/null || true' EXIT INT TERM
 
@@ -97,6 +106,22 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 listening || { echo "ERROR: tunnel did not come up within 60s" >&2; exit 1; }
+
+# `listening` proves SOMETHING owns the port, not that WE do. If another tunnel
+# already held it our ssh would have died on ExitOnForwardFailure while the loop
+# above still saw a listener -- and the script would report success for a tunnel
+# it did not create and cannot manage. Confirm our own process is alive.
+if ! kill -0 "$SSH_PID" 2>/dev/null; then
+    cat >&2 <<EOF
+ERROR: port $LOCAL_PORT is listening, but it is NOT this script's tunnel --
+our ssh exited. Another tunnel already owns the port.
+
+That other tunnel may work fine; this script just cannot manage it. Use it as
+is, or close it and re-run this. To find it:
+  lsof -nP -iTCP:$LOCAL_PORT -sTCP:LISTEN
+EOF
+    exit 1
+fi
 
 cat <<EOF
 
