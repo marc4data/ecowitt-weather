@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Ecowitt gap sweep weekly
+
+[Timer]
+# Sunday 11:00 UTC — after the nightly backup and the daily reconciliation, so
+# the three never contend for a 1 GB box.
+OnCalendar=Sun *-*-* 11:00:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

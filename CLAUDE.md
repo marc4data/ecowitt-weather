@@ -86,7 +86,7 @@ DDL, ORM models, or dataclasses before then.
 | Console history/SD interval | TBD (1–240 min, selectable) |
 | ecowitt.net account | ✅ exists |
 | Application Key / API Key | ✅ generated (Private Center) |
-| Station first-report date | **2026-08-01** — the station is new |
+| Station first-report date | **2026-07-23** — 65 min, base sensors only; then nothing until 2026-08-01 |
 | Console timezone | UTC−5 observed 2026-08-02. **Detect at runtime, never hardcode** |
 
 Sensor groups observed in `/device/real_time` (42 leaf metrics):
@@ -106,9 +106,20 @@ Sensor groups observed in `/device/real_time` (42 leaf metrics):
 Rain is **piezo/haptic only** — there is no `rainfall` (tipping-bucket) group.
 Requesting one returns `code=0` with empty data, not an error.
 
-⚠️ **The station has ~1 day of history.** Every retention question in §6 is
+⚠️ **The station has only days of history.** Every retention question in §6 is
 unanswerable until it accumulates months. Do not mistake an empty window for an
 API retention limit.
+
+✅ **The nine-day gap is explained** (found 2026-08-03 by the gap sweep, not by
+Phase 0's probes, which sampled fixed offsets and stepped straight over it):
+the console reported for 65 minutes on 2026-07-23 with **base sensors only**,
+then nothing until 2026-08-01. The soil channels and all three
+temp/humidity channels first appear on 2026-08-01 — they were paired in between.
+
+That is why `observation` has timestamps with 27 metrics and timestamps with 39.
+Sensors being *added* is commissioning; the integrity check therefore tests that
+a metric never **disappears** after first appearing, rather than that every
+timestamp matches.
 
 Credentials exist, so discovery (§3) is unblocked. The console MAC is still needed
 as a request parameter — read it off the console's Weather Server page.

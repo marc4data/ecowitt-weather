@@ -66,3 +66,29 @@ mistake reaches 180°.
 
 Executed notebooks are gitignored — they are large, full of data, and
 regenerable. Only the source is tracked.
+
+
+## `audit.ipynb`
+
+Proves the record says what it should. 23 checks, each able to fail, several
+deliberately redundant with a database constraint — a constraint that is never
+exercised is a claim rather than a guarantee.
+
+```bash
+./infra/tunnel.sh
+jupyter lab notebooks/audit.ipynb
+```
+
+Covers run continuity, resolution verification, grid coverage, constraint
+integrity (duplicates, unit drift, unclassified metrics, exact degree-sign
+bytes), quarantine, physical plausibility of values, raw-payload retention,
+credential leakage, and backup freshness.
+
+**The last check is the one that matters.** It takes a stored raw payload, runs
+it back through the *same* `ingest.normalize` code the pipeline uses, and
+compares row by row against what is in the table. Everything else tests internal
+consistency; this tests whether the curated data is reproducible from the
+evidence — which is the claim §10 makes when it says parsing bugs are
+recoverable but discarded data is not.
+
+Current result: 4,914 rows re-derived, 4,914 matched, 0 mismatches.

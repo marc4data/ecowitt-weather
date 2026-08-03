@@ -27,3 +27,4 @@ dist/
 notebooks/executed.ipynb
 notebooks/*-executed.ipynb
 .ipynb_checkpoints/
+notebooks/audit-executed.ipynb

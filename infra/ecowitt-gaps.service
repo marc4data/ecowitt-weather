@@ -1,0 +1,15 @@
+[Unit]
+Description=Ecowitt weekly gap sweep (refetch chunks containing missing slots)
+After=postgresql.service network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+WorkingDirectory=/opt/ecowitt/app
+# 90 days is not arbitrary: the cloud keeps 5-minute resolution for a rolling
+# three months, so a gap not refilled inside that window degrades to 30-minute
+# permanently. This is the last chance to recover one.
+ExecStart=/opt/ecowitt/app/run_ingest.sh gaps --days 90
+StandardOutput=journal
+StandardError=journal
