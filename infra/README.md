@@ -65,6 +65,35 @@ manual audit deferred until the day it fails.
 full-resolution copy of a rolling 3-month window is the single biggest
 liability of self-managing.
 
+## Querying the database from a GUI
+
+Postgres listens on localhost only, so a GUI needs an SSH tunnel. There is no
+open database port and this does not add one.
+
+```bash
+# leave running while you use the GUI
+gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap -- -N -L 5433:localhost:5432
+gcloud secrets versions access latest --secret=ecowitt-readonly-password
+```
+
+pgAdmin / DBeaver: `localhost:5433`, database `ecowitt`, user `ecowitt_ro`.
+
+Created by [`create_readonly_user.sh`](create_readonly_user.sh). A **separate,
+read-only** role rather than a password on `ecowitt` — the ingestion job uses
+peer auth over a unix socket and has no password at all, and adding one for a
+GUI's convenience would throw that away. Read-only because `raw_payload`'s
+append-only trigger only fires on UPDATE/DELETE; a write-capable role could
+still corrupt `observation` or `change_log` with a mistyped statement, and §8
+requires corrections to be recorded as changes rather than in-place overwrites.
+
+Enforced twice — SELECT-only grants plus `default_transaction_read_only`.
+Verified: DELETE, UPDATE, INSERT, DROP, CREATE, and mutating `raw_payload` are
+all refused, and the row count is unchanged afterwards.
+
+The password is generated locally, pushed straight to Secret Manager, and
+fetched by the VM's own service account — it never appears in a command line,
+a process list, or on disk.
+
 ## Security posture
 
 - Postgres listens on **localhost only**; there is deliberately no firewall
