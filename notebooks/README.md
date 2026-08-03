@@ -21,9 +21,17 @@ pip install -e ".[notebook]"
 jupyter lab notebooks/explore.ipynb
 ```
 
-The notebook defaults to the **Python (ecowitt)** kernel. If you land on another
-one, switch via *Kernel > Change Kernel*. The first cell checks and fails with
-that instruction rather than an import error.
+The notebook defaults to the **Python (ecowitt)** kernel. If you land on
+another one — this machine has Anaconda's Python and several other project
+venvs — switch it:
+
+* **VS Code:** click the kernel name in the notebook's **top-right corner** →
+  *Select Another Kernel…* → *Jupyter Kernel…* → **Python (ecowitt)**
+* **JupyterLab:** *Kernel > Change Kernel > Python (ecowitt)*
+
+The first cell checks the interpreter and prints the path it is actually
+running on, rather than letting you hit a bare `ModuleNotFoundError` that
+blames a missing package when the real problem is the wrong Python.
 
 The password comes from `ECOWITT_RO_PASSWORD` if set, otherwise Secret Manager.
 It is never stored in the notebook.
