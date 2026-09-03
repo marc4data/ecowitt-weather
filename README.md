@@ -7,7 +7,7 @@ constraints.
 **Current phase: 0 — endpoint discovery.** No database, no pipeline. This phase
 produces sample files and reports so that schema design is based on observed
 data rather than inference. Requirements:
-[PHASE0_DISCOVERY_REQUIREMENTS.md](PHASE0_DISCOVERY_REQUIREMENTS.md).
+[00_DISCOVERY_REQUIREMENTS.md](00_DISCOVERY_REQUIREMENTS.md).
 
 ## Setup
 

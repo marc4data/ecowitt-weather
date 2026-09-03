@@ -41,3 +41,10 @@ notebooks/executed.ipynb
 notebooks/*-executed.ipynb
 .ipynb_checkpoints/
 notebooks/audit-executed.ipynb
+
+# Local Claude Code settings — this machine's, not the project's.
+.claude/
+
+# Rendered exports of the notebooks. Large, regenerable, and stale the moment
+# a check is added or removed.
+notebooks/*.pdf
