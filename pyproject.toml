@@ -21,8 +21,36 @@ dev = [
     # syntax validation only -- it is not a substitute for executing the DDL.
     "sqlglot>=25.0",
 ]
+# The daily email. It imports notebooks/ecowitt_daily.py (thresholds) and
+# notebooks/ecowitt_nb.py (fetching, palette, chart styling) rather than
+# reimplementing either, so it needs what those need -- which is why this
+# overlaps `notebook` rather than being independent of it.
+#
+# ⚠️ DEPLOYMENT CONSEQUENCE: the VM currently installs only the base package,
+# whose sole dependency stack is psycopg. Running the report there means
+# `pip install -e '.[report]'` and shipping notebooks/*.py alongside src/ --
+# see infra/deploy_report.sh.
+report = [
+    "pandas>=2.0",
+    "sqlalchemy>=2.0",
+    "matplotlib>=3.8",
+    "psycopg[binary]>=3.1",
+    # Claude writes the opening of an ACTION email in plain English (§6.3).
+    # Listed here, but `reporting.triage` still imports it lazily inside a
+    # try/except: a broken install must cost the prose, never the email.
+    "anthropic>=0.40",
+]
 # Exploration only -- nothing in src/ingest or src/discovery imports these.
-notebook = ["pandas>=2.0", "jupyter>=1.0", "ipykernel>=6.0"]
+# sqlalchemy and matplotlib are here because notebooks/explore.ipynb imports
+# them; without them a fresh `pip install -e '.[notebook]'` gets a notebook
+# that fails on its first cell.
+notebook = [
+    "pandas>=2.0",
+    "jupyter>=1.0",
+    "ipykernel>=6.0",
+    "sqlalchemy>=2.0",
+    "matplotlib>=3.8",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
