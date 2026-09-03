@@ -172,3 +172,27 @@ def build_day(
     if gaps:
         frame.iloc[10 : 10 + gaps] = pd.NA
     return frame
+
+
+@pytest.fixture(autouse=True)
+def _isolate_report_env(monkeypatch):
+    """Unset every report variable before each test.
+
+    Without this, a test asserting "no contact is configured" passes on a clean
+    shell and fails on the maintainer's, because LAKEHOUSE_CONTACTS happens to
+    be exported. A test that depends on the ambient environment is a test that
+    reports on the environment.
+    """
+    for name in (
+        "LAKEHOUSE_CONTACTS",
+        "LAKEHOUSE_EMAIL_TO",
+        "LAKEHOUSE_EMAIL_TEST_TO",
+        "LAKEHOUSE_EMAIL_FROM",
+        "LAKEHOUSE_SMTP_USER",
+        "LAKEHOUSE_SMTP_PASSWORD",
+        "LAKEHOUSE_REPLY_TO",
+        "LAKEHOUSE_STATION_URL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_WORKSPACE_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)

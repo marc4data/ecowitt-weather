@@ -516,7 +516,9 @@ def _actions(items: list[dict]) -> list[str]:
         return out
 
     if people := config.contacts():
-        out += [f"{who} — {reach}" + (f" ({what})" if what else "") for who, reach, what in people]
+        out += [
+            " — ".join(part for part in (who, reach, what) if part) for who, reach, what in people
+        ]
     else:
         out.append(
             f"No contact is configured for the house ({config.ENV_CONTACTS} is "

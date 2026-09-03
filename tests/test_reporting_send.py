@@ -213,7 +213,7 @@ def test_a_data_failure_does_not_summon_the_neighbours(monkeypatch, fixture_db):
     """
     monkeypatch.setenv(
         config.ENV_CONTACTS,
-        '[{"who": "Some HVAC Co", "reach": "(555) 555-0100", "what": "services the A/C"}]',
+        '[{"who": "Some HVAC Co", "what": "services the A/C"}]',
     )
     # A clean house, but no ingestion run recorded for the window.
     start, end = day_bounds("2026-08-05")
@@ -222,7 +222,7 @@ def test_a_data_failure_does_not_summon_the_neighbours(monkeypatch, fixture_db):
     assert report.severity == "alert"
     assert "runs covering the day" in [i["check"] for i in report.attention["items"]]
     joined = " ".join(report.actions)
-    assert "555-0100" not in joined, "a data failure must not print the contact list"
+    assert "Some HVAC Co" not in joined, "a data failure must not print the contact list"
     assert "not house problems" in joined
     assert "Check the timers" in joined
 
@@ -230,12 +230,12 @@ def test_a_data_failure_does_not_summon_the_neighbours(monkeypatch, fixture_db):
 def test_a_house_failure_does_summon_them(monkeypatch, fixture_db):
     monkeypatch.setenv(
         config.ENV_CONTACTS,
-        '[{"who": "Some HVAC Co", "reach": "(555) 555-0100", "what": "services the A/C"}]',
+        '[{"who": "Some HVAC Co", "what": "services the A/C"}]',
     )
     start, end = day_bounds("2026-08-16")
     report = build(fixture_db, "2026-08-16", build_day(start, end, indoor=95.0, indoor_room=93.0))
     joined = " ".join(report.actions)
-    assert "555-0100" in joined
+    assert "Some HVAC Co" in joined
     assert "check whether the A/C is running" in joined
 
 

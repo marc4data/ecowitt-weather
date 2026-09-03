@@ -172,11 +172,15 @@ def priority(check: str) -> int:
 # `.env` locally. See .env.example for the format.
 #
 #   LAKEHOUSE_CONTACTS='[
-#     {"who": "Some HVAC Co", "reach": "(555) 555-0100",
-#      "what": "services the A/C; minimum call-out fee"},
-#     {"who": "A neighbour",  "reach": "(555) 555-0111",
-#      "what": "nearest to the house; knows where the key is"}
+#     {"who": "Some HVAC Co", "what": "services the A/C"},
+#     {"who": "A neighbour",  "what": "nearest to the house; knows where the key is"}
 #   ]'
+#
+# `reach` is an optional third field and is deliberately unused: this system
+# stores nothing it does not need, and a phone number in a secret store, an
+# email body and a rendered screenshot is three copies of somebody else's
+# contact details. The people who receive these emails already know how to
+# reach a neighbour; naming WHO is the part they cannot infer.
 #
 # When it is unset the ACTION email prints an explicit "no contact is
 # configured" line rather than quietly omitting the section: a missing
@@ -187,6 +191,10 @@ ENV_CONTACTS = "LAKEHOUSE_CONTACTS"
 def contacts() -> list[tuple[str, str, str]]:
     """(who, how to reach them, what they can do), from the environment.
 
+    `reach` is optional and normally empty -- see the note above. It stays in
+    the shape so an entry that genuinely needs it (an after-hours line nobody
+    memorises) can carry one without a code change.
+
     Never raises. A malformed list costs the email its contact block, which is
     a degraded ACTION email; letting it raise would cost the email entirely,
     which is the failure this whole project is built against.
@@ -195,7 +203,10 @@ def contacts() -> list[tuple[str, str, str]]:
     if not raw:
         return []
     try:
-        return [(entry["who"], entry["reach"], entry.get("what", "")) for entry in json.loads(raw)]
+        return [
+            (entry["who"], entry.get("reach", ""), entry.get("what", ""))
+            for entry in json.loads(raw)
+        ]
     except Exception as exc:  # never raise from the report path
         print(
             f"WARNING: {ENV_CONTACTS} is set but could not be read "

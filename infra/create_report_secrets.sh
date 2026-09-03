@@ -116,7 +116,7 @@ fi
 
 say "Contacts"
 if [[ "$FROM_ENV" -eq 0 && -z "${CONTACTS:-}" ]]; then
-    echo '  JSON, e.g. [{"who":"Some HVAC Co","reach":"(555) 555-0100","what":"services the A/C"}]'
+    echo '  JSON, e.g. [{"who":"Some HVAC Co","what":"services the A/C"}]'
     read -rp "  contacts JSON (or Enter to skip): " CONTACTS
 fi
 if [[ -n "${CONTACTS:-}" ]]; then
