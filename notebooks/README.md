@@ -1,10 +1,19 @@
 # Notebooks
 
-## `explore.ipynb`
+Three notebooks, three questions. Keeping them separate is deliberate: a
+notebook that answers one question can be read top to bottom and trusted.
 
-Samples every table and view **discovered from the catalog at runtime** — nothing
-is hardcoded, so an object added later is automatically in scope — then builds an
-hour × metric table for yesterday and today.
+| notebook | question | scope |
+|---|---|---|
+| `explore.ipynb` | what exists, and how is it built | the schema |
+| `explore_daily.ipynb` | is yesterday sound, and what did the weather do | one day |
+| `audit.ipynb` | does the whole record hold up | all-time |
+
+Shared plumbing lives in two plain modules the notebooks import rather than
+copy — `ecowitt_nb.py` (tunnel, connection, palette, fetching, metric metadata,
+charts) and `ecowitt_daily.py` (the day-scoped checks and summaries). That is
+not tidiness for its own sake: the tunnel-ownership bug below had to be fixed
+twice because the same cell had been pasted into two notebooks.
 
 ```bash
 pip install -e ".[notebook]"
@@ -17,9 +26,70 @@ pip install -e ".[notebook]"
 .venv/bin/python -m ipykernel install --user --name ecowitt \
     --display-name "Python (ecowitt)"
 
-./infra/tunnel.sh          # in another terminal, leave running
 jupyter lab notebooks/explore.ipynb
 ```
+
+## The tunnel opens itself
+
+**No separate terminal.** `nb.ensure_db()` checks port 5433, runs
+`infra/tunnel.sh` if nothing is listening, and waits for the port to genuinely
+accept a connection.
+
+The tunnel itself cannot be automated away, only its opening: Postgres binds to
+localhost on the VM and nothing accepts inbound connections, so a forwarded
+local port is the only route in.
+
+Two rules make it safe with more than one notebook open:
+
+* **A tunnel is closed only by the kernel that opened it, and only if nothing
+  else is connected.** Without that check, shutting down one kernel yanks the
+  tunnel out from under the other notebook mid-query — which is exactly what
+  happened before the check existed.
+* **`ensure_db()` probes the connection with `SELECT 1` before handing it back.**
+  When a tunnel dies under an open connection, SQLAlchemy still reports
+  `closed` as `False` — nobody *closed* anything, the socket just died. Only a
+  query finds out, so it runs one and rebuilds the pool if it fails.
+
+Running `./infra/tunnel.sh` yourself still works; the notebooks will use it and
+leave it running.
+
+## `explore.ipynb` — the schema
+
+Samples every table and view **discovered from the catalog at runtime** —
+nothing is hardcoded, so an object added later is automatically in scope — then
+shows how the schema enforces its own rules: constraints, triggers, indexes and
+columns, plus the metric catalog and what is actually stored.
+
+Section 4 is the one worth reading. Five project rules are made *impossible to
+violate* there rather than merely detectable later — the append-only trigger on
+`raw_payload`, the composite `(metric, unit)` foreign key, the CHECK that stops
+a credential landing in a stored URL. That enforcement layer is what
+self-managed Postgres bought over BigQuery for about $44/yr.
+
+## `explore_daily.ipynb` — the daily report
+
+Yesterday as a complete local calendar day: local midnight to local midnight at
+the native 5-minute resolution, so 23 or 25 hours on a DST changeover rather
+than a wrong 24. Three parts, in the order they should be read:
+
+1. **Boundary conditions** — is this day fit to report on. Ten checks, each with
+   a verdict, the number behind it, and why it matters. They cluster at the
+   boundaries because that is where a day goes wrong: the edges of the window
+   (did it start and finish landing), of the grid (gaps — and whether they are
+   scattered or one long hole), and of each sensor's physical range.
+2. **Summary** — the day in a dozen numbers, each with *when* it happened. A
+   104 ºF high at 15:00 is a normal afternoon; the same high at 03:00 is a
+   broken sensor.
+3. **Supporting detail** — one figure per logical group, panels stacked on a
+   single shared time axis, plus the full table behind them.
+
+Two checks exist because a healthy-looking number can hide a broken sensor:
+**longest single gap** (one 40-minute hole and eight scattered singles both read
+as "97% covered") and **no flatlined sensor** (a sensor stuck on one value all
+day scores perfect coverage; only variance catches it).
+
+This asks *is this day sound*. Whether the whole record holds up is
+`audit.ipynb`'s job, and nothing here duplicates it.
 
 ### Kernels
 
@@ -68,14 +138,13 @@ Executed notebooks are gitignored — they are large, full of data, and
 regenerable. Only the source is tracked.
 
 
-## `audit.ipynb`
+## `audit.ipynb` — the whole record
 
 Proves the record says what it should. 23 checks, each able to fail, several
 deliberately redundant with a database constraint — a constraint that is never
 exercised is a claim rather than a guarantee.
 
 ```bash
-./infra/tunnel.sh
 jupyter lab notebooks/audit.ipynb
 ```
 
