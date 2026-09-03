@@ -130,8 +130,8 @@ rain.
 
 - **`pressure.relative` == `pressure.absolute`** in every capture (`29.24`–
   `29.26`). Relative pressure is normally sea-level-adjusted; identical values
-  mean the console's altitude offset is unset. At 35.25 N, −95.53 W the station
-  is roughly 180 m above sea level, so relative should read meaningfully higher.
+  mean the console's altitude offset is unset. The station sits roughly 180 m
+  above sea level, so relative should read meaningfully higher.
   **This is a console setting, not a pipeline bug** — but if it stays unset,
   storing both fields is storing the same number twice, and any model feature
   built on "relative pressure" is really station pressure.

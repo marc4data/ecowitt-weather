@@ -1,0 +1,47 @@
+[Unit]
+Description=Daily lakehouse email (yesterday, to the household)
+After=postgresql.service network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ecowitt
+WorkingDirectory=/opt/ecowitt/app
+# Addresses live here rather than in Secret Manager: they are not secrets, and
+# a reviewer should be able to see who this machine emails without reading a
+# secret store. Neither list has a default in code -- an unset one refuses.
+#
+# ⚠️ CHANGEME before enabling. The install script substitutes them.
+# The assignments are QUOTED because a display name contains spaces, and
+# systemd otherwise reads each word as a separate variable.
+Environment="LAKEHOUSE_EMAIL_TO=CHANGEME-production-list"
+Environment="LAKEHOUSE_EMAIL_TEST_TO=CHANGEME-marc-only"
+Environment="LAKEHOUSE_EMAIL_FROM=CHANGEME-sender"
+# The sender is an unattended mailbox, so replies are pointed at a person.
+Environment="LAKEHOUSE_REPLY_TO=CHANGEME-reply-to"
+# The Gmail account the app password belongs to. Needed separately only
+# because LAKEHOUSE_EMAIL_FROM may carry a display name, which Gmail will
+# not accept as a username.
+Environment=LAKEHOUSE_SMTP_USER=CHANGEME-smtp-user
+Environment=LAKEHOUSE_SMTP_HOST=smtp.gmail.com
+Environment=LAKEHOUSE_SMTP_PORT=587
+# The station's ecowitt.net page, linked from every email. Substituted at
+# install time -- the id identifies the house, so it stays out of the repo.
+Environment="LAKEHOUSE_STATION_URL=CHANGEME-station-url"
+# Only needed for an identity-linked API key, which is rejected unless the
+# request names its workspace. Not a credential -- it grants nothing on its
+# own -- but it identifies an account, so it is substituted like the rest
+# rather than committed. An exception to that rule is how the next value
+# gets hardcoded, and that one might matter.
+Environment="ANTHROPIC_WORKSPACE_ID=CHANGEME-workspace-id"
+# The report imports the check thresholds from notebooks/ecowitt_daily.py, which
+# is deployed alongside src/ rather than copied into it -- two copies of a
+# threshold is the failure this project keeps designing against.
+Environment=ECOWITT_NOTEBOOK_DIR=/opt/ecowitt/app/notebooks
+ExecStart=/opt/ecowitt/app/run_report.sh --send
+StandardOutput=journal
+StandardError=journal
+
+# No restart loop. A failed send must stay failed and visible: the heartbeat's
+# email-staleness query is what notices, and a retry storm would hide the
+# failure behind an email that eventually arrived hours late.

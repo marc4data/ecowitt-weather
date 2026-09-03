@@ -1,6 +1,14 @@
 # Secrets — never committed
 .env
 
+# Rendered emails and the local send record.
+#
+# Not secrets, but not ours to publish either: sent.jsonl records who every
+# email went to, and a preview is a full report on a private house — indoor
+# temperatures, when it is empty, when the cooling failed. This repository is
+# public; that is a burglar's reading list.
+data/
+
 # Raw API captures: large, credential-bearing metadata, regenerable.
 # samples/reports/ is deliberately NOT ignored — D2–D5 are the Phase 0
 # deliverable and must be reviewable in history.
@@ -22,9 +30,21 @@ dist/
 # macOS
 .DS_Store
 
+# Pre-refactor backups of notebooks that have since been split. Local working
+# copies, superseded by what is tracked -- and their saved outputs carry the
+# console MAC, which is kept in Secret Manager precisely so it is not published.
+notebooks/_prerefactor/
+
 # Executed notebooks: large, full of data outputs, and regenerable.
 # The source notebook under notebooks/ is what is tracked.
 notebooks/executed.ipynb
 notebooks/*-executed.ipynb
 .ipynb_checkpoints/
 notebooks/audit-executed.ipynb
+
+# Local Claude Code settings — this machine's, not the project's.
+.claude/
+
+# Rendered exports of the notebooks. Large, regenerable, and stale the moment
+# a check is added or removed.
+notebooks/*.pdf

@@ -7,6 +7,14 @@ Persistent context for Claude Code working in this repository.
 > 15-minute heartbeat are all running. Sections still marked `TBD` are
 > unresolved — **do not invent answers for them.** If a task depends on an
 > unresolved item, stop and ask.
+>
+> **Daily email: built 2026-08-28, ready to deploy, NOT YET RUNNING.** `src/reporting/` +
+> `infra/ecowitt-report.*` + `dags/lakehouse_*_dag.py`, specified in
+> [01_DAILY_EMAIL_REQUIREMENTS.md](01_DAILY_EMAIL_REQUIREMENTS.md). It sends
+> nothing until `schema/03_email_log.sql` is applied and the address lists are
+> set; `infra/deploy_report.sh` installs it. Detection thresholds live in
+> `notebooks/ecowitt_daily.py`, not in `reporting/` — one copy, so the notebook
+> and the email cannot disagree.
 
 ---
 
@@ -39,7 +47,6 @@ Design values, in priority order:
 
 ### Not in scope
 
-- Any dashboard or UI. Visualization is a separate concern reading from this DB.
 - Weather-condition alerting (this is not a warning system)
 - Model training or serving — this tool prepares the substrate, nothing more
 
@@ -534,11 +541,26 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 # backfill:       python -m ingest backfill --days 7
 # gap sweep:      python -m ingest gaps --days 30
 
+# --- daily lakehouse email (01_DAILY_EMAIL_REQUIREMENTS.md) ---
+# The default sends NOTHING. --send is the only thing that reaches the household.
+# preview:      python -m reporting.daily                       # yesterday, to disk
+# preview a day: python -m reporting.daily --for-date 2026-08-21
+# to Marc only: python -m reporting.daily --test
+# prove alerting: python -m reporting.daily --selftest --test   # synthetic, no DB
+# PRODUCTION:   python -m reporting.daily --send                # yesterday only
+
 # --- live infrastructure (project ecowitt-504320) ---
 # ssh:        gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap
 # psql:       sudo -u ecowitt psql ecowitt
 # timers:     systemctl list-timers 'ecowitt-*'
 # backup now: sudo systemctl start ecowitt-backup.service
+# email now:  sudo -u ecowitt /opt/ecowitt/app/run_report.sh --test
+
+# --- turning the daily email on (infra/README.md has the full runbook) ---
+# 1. ./infra/create_emailer_user.sh      # email_log + its narrow writer role
+# 2. ./infra/create_report_secrets.sh    # SMTP app password, Anthropic key, contacts
+# 3. LAKEHOUSE_EMAIL_TO=... LAKEHOUSE_EMAIL_TEST_TO=... LAKEHOUSE_EMAIL_FROM=... \
+#    ./infra/deploy_report.sh            # installs, proves a send, THEN enables
 # heartbeat:  sudo -u ecowitt DB_NAME=ecowitt /opt/ecowitt/heartbeat.sh
 # constraints: sudo -u ecowitt psql -q ecowitt -f verify_constraints.sql
 ```
