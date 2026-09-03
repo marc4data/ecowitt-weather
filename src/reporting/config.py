@@ -22,8 +22,8 @@ from datetime import date
 
 SUBJECT_PREFIX = "[lakehouse]"
 # Deliberately imprecise. This repository is public and the house stands empty;
-# a lake is a region, a latitude and longitude is a doorstep.
-HOUSE = "the lakehouse at Lake Eufaula, OK"
+# a region is a region; a lake plus a name is close to a doorstep.
+HOUSE = "the lakehouse in rural Oklahoma"
 
 # The station's own zone. Every time in the email is a clock time at the house,
 # and the zone is no longer printed: three readers who all know where the house

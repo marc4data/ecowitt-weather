@@ -109,7 +109,7 @@ def resolve_mode(args: argparse.Namespace, for_date: date) -> str:
     `--for-date` is reproducing a past condition to look at the email it makes;
     an ACTION email dated today but describing 21 August tells three people the
     house is broken NOW. Best case that is confusing. Worst case somebody drives
-    out to Eufaula.
+    two hours to an empty house.
     """
     if args.send and args.test:
         raise SystemExit("--send and --test are different address lists. Pick one.")

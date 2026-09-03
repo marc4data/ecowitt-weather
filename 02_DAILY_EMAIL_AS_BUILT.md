@@ -219,7 +219,7 @@ strongly to a neighbour's phone number as to a database password.
 
 ### 5.2 Location details were removed or scrubbed
 
-Coordinates were replaced with "Lake Eufaula, OK" in the requirements doc, in
+Coordinates were replaced with a region name in the requirements doc, in
 `config.py`, and in a Phase 0 report that carried them in a footnote about the
 altitude offset. `data/` and `notebooks/_prerefactor/` were gitignored — the
 first holds recipient addresses and rendered reports on an empty house, the

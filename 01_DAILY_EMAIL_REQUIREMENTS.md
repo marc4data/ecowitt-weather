@@ -12,7 +12,7 @@
 ## 1. What this is
 
 A daily email to three people — Marc, Stacy (sister), Tad (cousin) — answering
-one question about the lakehouse at Lake Eufaula, OK:
+one question about the lakehouse in rural Oklahoma:
 
 **Is the house all right?**
 
@@ -205,7 +205,7 @@ present. The refusal message should say why rather than just erroring.
 Why: the whole point of `--for-date` is to reproduce a past condition and look
 at the email it produces. An ACTION email dated today but describing 21 August
 tells three people the house is broken *now*. Best case that is confusing; worst
-case somebody drives out to Eufaula.
+case somebody drives two hours to an empty house.
 
 ### 5.4 Any non-default date is visibly labelled
 
