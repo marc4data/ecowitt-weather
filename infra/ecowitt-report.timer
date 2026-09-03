@@ -1,0 +1,27 @@
+[Unit]
+Description=Send the daily lakehouse email each morning
+
+[Timer]
+# 07:00 America/Chicago. ⚠️ UNCONFIRMED (§11.2) — and this value is a PROMISE:
+# the footer of every email tells three people it arrives at this time, from
+# `config.SEND_TIME_HUMAN`. Change both or neither.
+#
+# The hour is not arbitrary. The reconcile pass runs at 10:00 UTC and rewrites
+# any corrected values, so sending after it means the email reports reconciled
+# data rather than racing it.
+#
+# The zone is stated in the expression rather than inherited from the VM's
+# clock, which is UTC. Without it this would fire at 02:00 Central in summer,
+# before the day it reports on has even finished landing — and it would drift by
+# an hour at every DST changeover. systemd has honoured a trailing timezone
+# since v240; Debian 12 ships 252.
+OnCalendar=*-*-* 07:00:00 America/Chicago
+Persistent=true
+# A few minutes of jitter is fine for a morning email and keeps this from
+# starting in lockstep with everything else on the box. Not more: the promise
+# in the footer is a time, not a window.
+RandomizedDelaySec=300
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

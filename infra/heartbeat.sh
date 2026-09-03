@@ -30,6 +30,7 @@ LOG_NAME="${LOG_NAME:-ecowitt-heartbeat}"
 MAX_RUN_AGE_MIN="${MAX_RUN_AGE_MIN:-150}"
 MAX_BACKUP_AGE_MIN="${MAX_BACKUP_AGE_MIN:-1560}"   # 26h — one nightly + slack
 MAX_RUNNING_MIN="${MAX_RUNNING_MIN:-60}"           # a run stuck this long crashed
+MAX_EMAIL_AGE_MIN="${MAX_EMAIL_AGE_MIN:-1560}"     # 26h — one daily + slack
 
 q() { psql -tAqc "$1" "$DB_NAME" 2>/dev/null || echo ""; }
 
@@ -42,12 +43,24 @@ BACKUP_AGE="$(q "SELECT coalesce(round(extract(epoch from now()-max(finished_at)
                  FROM backup_log")"
 STUCK="$(q "SELECT count(*) FROM run_log
             WHERE status='running' AND started_at < now() - interval '$MAX_RUNNING_MIN minutes'")"
+# The daily email that never arrives is the hardest failure to see: no error, no
+# log line, just a quiet morning. This is the only thing that notices.
+#
+# ⚠️ THE mode FILTER IS THE WHOLE POINT. Without it, `--test` resets the clock
+# and masks a production email that never went out — an observability check
+# defeated by the act of testing it.
+#
+# Tolerated as missing: the table does not exist until 03_email_log.sql is
+# applied, and `q` swallows that into an empty string, which becomes -1 below.
+EMAIL_AGE="$(q "SELECT coalesce(round(extract(epoch from now()-max(sent_at))/60), -1)
+                FROM email_log WHERE mode = 'production'")"
 OBS_ROWS="$(q "SELECT count(*) FROM observation")"
 LAST_OBS_AGE="$(q "SELECT coalesce(round(extract(epoch from now()-max(ts_utc))/60), -1)
                    FROM observation")"
 
 RUN_AGE="${RUN_AGE:--1}"; BACKUP_AGE="${BACKUP_AGE:--1}"
 STUCK="${STUCK:-0}"; OBS_ROWS="${OBS_ROWS:-0}"; LAST_OBS_AGE="${LAST_OBS_AGE:--1}"
+EMAIL_AGE="${EMAIL_AGE:--1}"
 
 PROBLEMS=()
 if ! pg_isready -q; then
@@ -68,6 +81,13 @@ fi
 if [[ "$STUCK" -gt 0 ]]; then
     PROBLEMS+=("${STUCK}_runs_wedged_in_running")
 fi
+# -1 means the emailer has never sent, or email_log does not exist yet. Neither
+# is a problem before the report is deployed, so this stays quiet until the
+# first production email has been sent once — same reasoning as the backup check
+# above, which only fires once there is data worth backing up.
+if [[ "$EMAIL_AGE" != "-1" && "$EMAIL_AGE" -gt "$MAX_EMAIL_AGE_MIN" ]]; then
+    PROBLEMS+=("last_daily_email_${EMAIL_AGE}min_ago")
+fi
 
 if [[ ${#PROBLEMS[@]} -eq 0 ]]; then
     SEVERITY="INFO"; STATUS="healthy"; DETAIL=""
@@ -79,6 +99,7 @@ fi
 PAYLOAD=$(cat <<JSON
 {"status":"$STATUS","problems":"$DETAIL",
  "last_run_age_min":$RUN_AGE,"last_backup_age_min":$BACKUP_AGE,
+ "last_email_age_min":$EMAIL_AGE,
  "runs_wedged":$STUCK,"observation_rows":$OBS_ROWS,
  "last_observation_age_min":$LAST_OBS_AGE}
 JSON
@@ -90,5 +111,5 @@ gcloud logging write "$LOG_NAME" "$PAYLOAD" \
     --payload-type=json --severity="$SEVERITY" 2>/dev/null \
     || echo "WARNING: could not write to Cloud Logging (heartbeat is blind)" >&2
 
-echo "$STATUS run_age=${RUN_AGE}m backup_age=${BACKUP_AGE}m wedged=$STUCK rows=$OBS_ROWS"
+echo "$STATUS run_age=${RUN_AGE}m backup_age=${BACKUP_AGE}m email_age=${EMAIL_AGE}m wedged=$STUCK rows=$OBS_ROWS"
 [[ "$STATUS" == "healthy" ]] || exit 1

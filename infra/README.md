@@ -90,7 +90,7 @@ Telling the machines apart by hand:
 |---|---|---|
 | hostname | `Marcs-MacBook-Pro.local` | `ecowitt-db` |
 | home | `/Users/marcalexander` | `/home/marcalexander` |
-| gcloud identity | `marc4data@gmail.com` | `ecowitt-vm@…gserviceaccount.com` |
+| gcloud identity | the operator’s address | `ecowitt-vm@…gserviceaccount.com` |
 
 On the VM no tunnel is needed at all — `sudo -u ecowitt psql ecowitt`.
 
@@ -184,7 +184,94 @@ gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap \
 # expect an email in ~1h, then start it again
 ```
 
-Alerts go to `marc4data@gmail.com`. **Confirm the subscription in your inbox** —
+Alerts go to the operator’s address. **Confirm the subscription in your inbox** —
 an unconfirmed channel silently delivers nothing.
+
+### The daily email is watched by the same switch
+
+`ecowitt-report.timer` sends the household email each morning
+([01_DAILY_EMAIL_REQUIREMENTS.md](../01_DAILY_EMAIL_REQUIREMENTS.md)). It gets no
+new alerting infrastructure — a successful send writes an `email_log` row, and
+`heartbeat.sh` grew a sixth query for the age of the newest **production** row
+(`MAX_EMAIL_AGE_MIN`, 26 h). A stalled emailer then trips *pipeline reporting
+unhealthy*, and a dead box still trips *pipeline is not reporting*.
+
+⚠️ **The `mode = 'production'` filter in that query is the whole point.** Without
+it a `--test` send at 3pm resets the clock and masks a production email that
+never went out — an observability check defeated by the act of testing it.
+
+Verify it the same way as the others, by breaking it:
+
+```bash
+sudo systemctl stop ecowitt-report.timer     # then wait out 26h
+sudo -u ecowitt /opt/ecowitt/app/run_report.sh --test   # must NOT clear the alarm
+```
+
+The outermost layer is not on the VM at all: every email's footer tells three
+people when it should arrive. Three people noticing that the morning email did
+not come is a cheaper and more reliable detector than anything running here.
+
+## Turning on the daily email
+
+Four scripts, in this order. Each one refuses to run if the one before it has
+not been done, so a wrong order is a clear error rather than a broken box.
+
+Everything runs **from the repo root on your workstation**. `gcloud` is a client
+for Google's API — it talks to GCP from your laptop. You never need to log into
+the VM by hand; the scripts do that over IAP where something has to happen on
+the machine itself.
+
+```bash
+# 1. email_log + the one role allowed to write it  (~1 min)
+./infra/create_emailer_user.sh
+
+# 2. the secrets: Gmail app password, and optionally the Anthropic key
+#    and contacts. Prompts for each; nothing lands in shell history.   (~2 min)
+./infra/create_report_secrets.sh
+
+# 3. install, verify, and turn it on                        (~5-10 min: the
+#    pandas/matplotlib build on a 1 GB e2-micro is the slow part)
+LAKEHOUSE_EMAIL_TO='marc@…,stacy@…,tad@…' \
+LAKEHOUSE_EMAIL_TEST_TO='marc@…' \
+LAKEHOUSE_EMAIL_FROM='marc@…' \
+LAKEHOUSE_STATION_URL='https://www.ecowitt.net/home/index?id=…' \
+./infra/deploy_report.sh
+```
+
+`deploy_report.sh` installs with the timer **off**, sends one `--test` email from
+the VM, and enables the timer only if that email actually went out. A scheduler
+enabled for something that has never run is a promise nobody has checked, and
+the first unattended run would be 07:00 on the morning it matters.
+
+### What each piece needs, and why it is where it is
+
+| Value | Lives in | Why there |
+|---|---|---|
+| database passwords, Gmail app password, Anthropic key, contacts | **Secret Manager** | secrets, and personal data. Fetched at runtime by the VM's own service account; never written to disk |
+| email addresses, station URL, workspace id | **the unit file** | not secrets. A reviewer should see who this machine emails without opening a secret store |
+| check thresholds | `notebooks/ecowitt_daily.py` | one copy, shared with the notebook, so the two can never disagree |
+
+### Then verify the two things a green install does not prove
+
+```bash
+# The ACTION path — it only ever runs on a bad morning, so it is the least
+# exercised code in the system. This sends a synthetic one to the test address.
+gcloud compute ssh ecowitt-db --zone=us-central1-a --tunnel-through-iap \
+  --command="sudo -u ecowitt LAKEHOUSE_EMAIL_TO=x LAKEHOUSE_EMAIL_TEST_TO=you@x \
+             LAKEHOUSE_EMAIL_FROM=you@x /opt/ecowitt/app/run_report.sh --selftest --test"
+
+# The dead-man's switch, by breaking it (see "Monitoring" above)
+sudo systemctl stop ecowitt-report.timer    # wait out 26 h, confirm the alert
+```
+
+### Rolling back
+
+```bash
+sudo systemctl disable --now ecowitt-report.timer
+```
+
+Nothing else needs undoing. The ingestion job, the backups and the heartbeat are
+independent of the report — the only thing the report added to them is the sixth
+heartbeat query, which stays quiet until a production email has been sent once.
 
 ## Still open
