@@ -564,3 +564,57 @@ Discrepancies write to `change_log` with reason. Cadence TBD.
 # heartbeat:  sudo -u ecowitt DB_NAME=ecowitt /opt/ecowitt/heartbeat.sh
 # constraints: sudo -u ecowitt psql -q ecowitt -f verify_constraints.sql
 ```
+
+---
+
+## 14. The round workflow
+
+Work arrives as **rounds**. Cowork is project manager and owns the register;
+Claude Code sessions in VS Code execute. The skill is `project-round-close`.
+
+| | |
+|---|---|
+| **`<abbr>`** | `lake` — short for lakehouse, the way the household and the email talk about it |
+| **`<session>`** | lower case, one per parallel VS Code window. `main` is the primary checkout; `wta`, `wtb`, … are worktrees. Each checkout holds an untracked `.session` file naming itself |
+| **register** | `claude_work/lake_request_register.md` — Cowork owns it, sessions read it |
+| **prompts** | `claude_work/prompts/<id>.md` |
+| **reports** | `claude_work/reports/<id>-report.md` |
+| **id shape** | `lake-<session>-R-###`; short form `R-###` |
+| **repo root** | `~/projects/ai_orchestrator_claude/ecowitt_weather` on marcs-macbook-pro-local. Cowork reaches it over the device bridge |
+
+**Cowork assigns R-numbers; sessions use them.** A session that needs a number
+asks. A request gets its number when Marc makes it, not when a round starts.
+
+### This project's own traps — they were paid for
+
+1. **The thresholds are not in `src/`.** `notebooks/ecowitt_daily.py` owns every
+   check and threshold; `notebooks/ecowitt_nb.py` owns fetching, palette and
+   chart styling. `src/reporting/shared.py` puts them on `sys.path`. Editing
+   either file changes what three people receive at 07:00.
+2. **A browser render is not a test of an email.** Gmail strips `position:`
+   entirely. It cost six days of a broken house band that looked perfect
+   locally. Tables and percent widths only.
+3. **The default sends nothing.** `--send` is the only flag that reaches the
+   household. `--test` goes to Marc alone.
+4. **A warning that is usually nothing is worse than no warning.** This is why
+   `no flatlined sensor` was removed (02_DAILY_EMAIL_AS_BUILT.md §2.4). Any
+   round that adds or loosens a check argues against that standard explicitly.
+### Handing a round across surfaces
+
+**Observed 2026-09-17: `project-round-close` is installed in Cowork and NOT in
+Claude Code.** `/project-round-close` and `/anthropic-skills:project-round-close`
+were both tried in Code and neither resolved; this project's `.claude/` carries
+no plugin or marketplace config. So **neither direction of the handoff depends
+on a slash command**:
+
+| direction | the cell |
+|---|---|
+| Cowork → Code | `Read and execute claude_work/prompts/<id>.md` — a path, which any surface understands |
+| Code → Cowork | `Review round <id> — report at claude_work/reports/<id>-report.md` — plain English; Cowork invokes the skill itself |
+
+Do not put a slash command in either cell until it has been **seen working on
+that surface**, and then record it here rather than inferring it from how the
+other surface addresses the skill.
+
+5. **A staged break that comes back green is the finding.** Every round proves
+   its guard can fail and names the test that went red.
