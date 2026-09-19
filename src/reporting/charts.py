@@ -366,53 +366,204 @@ def outdoor(report) -> bytes:
     return _png(fig)
 
 
+# --- rain ------------------------------------------------------------------
+# A trailing-24-hour total needs 24 hourly readings behind it, and the station
+# drops slots routinely (CLAUDE.md §5.0.8). Rather than draw a window that is
+# quietly short, a window below 90% of its hours is not drawn at all -- the same
+# 90% floor `grid coverage` uses to decide a day is worth reporting on, so the
+# email has one standard for "enough of the record to answer with" rather than
+# two.
+RAIN_WINDOW_H = 24
+RAIN_MIN_HOURS = 22  # ceil(24 * 0.90)
+
+
+def _rain_hourly(report) -> pd.Series | None:
+    """Rain that fell in each hour of the week, or None when nothing reported.
+
+    `rainfall_piezo.1_hour` is the station's own "how much fell in the last
+    hour", read directly rather than differenced out of the daily accumulator.
+    Both would agree, but the accumulator resets at midnight and differencing
+    across a reset is exactly the arithmetic `rain accumulators only reset to
+    zero` exists to catch. Measuring the thing directly avoids having to be
+    careful.
+
+    The week arrives on the station's 5-minute grid (so the outdoor chart's
+    peaks match the summary table). `1_hour` is a ROLLING total, so the value at
+    each hour boundary is that hour's rain -- resample with `last`, never `sum`,
+    which would count every reading twelve times over.
+
+    ⚠️ `label="right", closed="right"` IS LOAD-BEARING, and its absence was a
+    bug. A plain `resample("1h")` labels each bucket by its LEFT edge while
+    `last` takes the reading at the RIGHT one -- so the point stamped 06:00 was
+    the trailing hour ending 06:55, and the whole series sat about an hour later
+    than its own labels. Measured against the daily accumulator on 10-11 Sep
+    2026: the 24 hours to Fri 11 06:00 summed to 0.15 in left-labelled and
+    0.14 in right-labelled, where the accumulator says 0.14. It was invisible
+    while nothing on the chart named a time; the peak label names one.
+
+    ⚠️ HOW ACCURATE THIS CAN BE. `1_hour` is quantised to 0.01 in, so sampling
+    it once an hour can lose a cent-inch of an event that straddles a boundary.
+    Over 6-12 Sep 2026 this read 0.10 / 0.05 / 0.09 against the daily
+    accumulator's 0.10 / 0.06 / 0.09 -- exact on two days of three, 0.01 low on
+    the third. (The old left-labelled series totalled the week correctly at
+    0.25 in only because it was 0.01 LOW on the 11th and 0.01 HIGH on the 12th
+    and the two cancelled.) Closing that last cent-inch means differencing the
+    accumulator, which is R-002's ground and not this chart's to guess at.
+    """
+    rolling = report.week.get("rainfall_piezo.1_hour")
+    if rolling is not None and rolling.notna().any():
+        return rolling.resample("1h", label="right", closed="right").last()
+
+    # Fall back to the daily accumulator, differenced hour on hour. A fall that
+    # is not a reset cannot be negative rain, so the floor at zero is safe.
+    total = report.week.get("rainfall_piezo.daily")
+    if total is None or total.dropna().empty:
+        return None
+    total = total.resample("1h", label="right", closed="right").last()
+    delta = total.diff()
+    return delta.where(delta >= 0, total).clip(lower=0)
+
+
+def _rain_24h(hourly: pd.Series) -> pd.Series:
+    """Trailing 24-hour totals: at each hour, the rain in the 24 hours before it.
+
+    Two ways a window can be short, and both produce NaN rather than a low
+    number, because an understated total is indistinguishable from a dry spell:
+
+      * **Dropouts.** An hour with no reading at all resamples to NaN. Up to
+        two of them are tolerated and counted as no rain; past that the window
+        is below the 90% `grid coverage` calls reportable and is dropped.
+      * **The leading edge.** The first 23 hours of the frame have less than a
+        day behind them however complete they are, so they are blanked outright
+        -- `min_periods` alone would let hour 22 through on 22 readings that are
+        all the frame has. Widening the fetch to 8 days would fill this in, and
+        cannot be done from here: `report.week` is one frame shared with the
+        outdoor and two indoor charts, all of which say "last 7 days".
+
+    A blank is drawn as a blank, the same rule the traces follow.
+    """
+    out = hourly.rolling(RAIN_WINDOW_H, min_periods=RAIN_MIN_HOURS).sum()
+    out.iloc[: RAIN_WINDOW_H - 1] = float("nan")
+    return out
+
+
+def rain_summary(report) -> dict | None:
+    """Every number the rain chart states, computed once. None when no rain data.
+
+    Pure, and deliberately separate from the drawing: this is the ONE place the
+    week total is worked out, so a test can hold the headline figure to the
+    hourly sum without rendering a PNG, and `rain()` has no arithmetic of its
+    own to get wrong.
+
+    🚨 `total` IS THE HOURLY SUM, NEVER THE ROLLING ONE. Adding up 168
+    trailing-24-hour values counts every hour of rain about 24 times over, and
+    the answer is wrong by an order of magnitude in a direction that still looks
+    plausible on a chart.
+    """
+    hourly = _rain_hourly(report)
+    if hourly is None:
+        return None
+    window = _rain_24h(hourly)
+    drawn = window.dropna()
+    return {
+        "hourly": hourly,
+        "window": window,
+        "total": float(hourly.sum(skipna=True)),
+        "peak": float(drawn.max()) if not drawn.empty else 0.0,
+        "peak_at": drawn.idxmax() if not drawn.empty else None,
+    }
+
+
+def _mark_wettest(ax, window: pd.Series) -> None:
+    """Label the wettest 24 hours of the week, and when they ended.
+
+    The value alone is not the answer. "0.25 in" is a fact; "0.25 in in the
+    24 hours to Sat 12, 4 p.m." is what somebody deciding whether to drive out
+    there actually wants.
+    """
+    clean = window.dropna()
+    stamp = clean.idxmax()
+    value = float(clean.loc[stamp])
+
+    # A label centred on a peak at the very edge of the plot hangs over the
+    # axis; anchor it inward once it is within a tenth of either end. Same rule
+    # as `_mark_extreme`, and the same reason.
+    left, right = ax.get_xlim()
+    fraction = (mdates.date2num(stamp) - left) / (right - left) if right > left else 0.5
+    align = "left" if fraction < 0.10 else ("right" if fraction > 0.90 else "center")
+
+    ax.plot([stamp], [value], "o", color=nb.SERIES_COLORS[0], markersize=5, zorder=7)
+    ax.annotate(
+        f"{value:.2f} in · 24 h to {stamp:%a %d}, {stamp:%-I %p}".replace("AM", "am").replace(
+            "PM", "pm"
+        ),
+        xy=(stamp, value),
+        xytext=(0, 10),
+        textcoords="offset points",
+        ha=align,
+        va="bottom",
+        fontsize=9,
+        color=nb.INK,
+        zorder=8,
+        bbox={
+            "boxstyle": "round,pad=0.22",
+            "facecolor": nb.SURFACE,
+            "edgecolor": "none",
+            "alpha": 0.85,
+        },
+    )
+
+
 def rain(report) -> bytes:
-    """Rain by the hour, over the last 7 days.
+    """Rain in any trailing 24 hours, over the last 7 days.
 
-    Read from `rainfall_piezo.1_hour` -- the station's own "how much fell in the
-    last hour" -- rather than differencing the daily total. Both would agree,
-    but the accumulator resets at midnight and differencing across a reset is
-    exactly the arithmetic `rain accumulators only reset to zero` exists to
-    catch. Measuring the thing directly avoids having to be careful.
+    Not rain per hour. A 5-minute snapshot of `rain_rate` answers *was it coming
+    down hard* and never *how much fell*, and an hourly trace splits a storm
+    that runs 8 p.m. to 4 a.m. across whatever calendar boundary the reader
+    happens to apply. Every point here is the rain in the 24 hours before it, so
+    an event appears once, at its true size.
 
-    Seven days rather than one: most days here are dry, and a flat line at zero
+    Every number on it comes from `rain_summary`, which is where the rule about
+    the week total being the HOURLY sum rather than the rolling one is written
+    down and where a test can reach it.
+
+    Seven days rather than one: most weeks here are dry, and a flat line at zero
     for 24 hours tells nobody anything. A week shows when it last actually
     rained, which is the question behind the question.
     """
     nb.style()
-    rolling = report.week.get("rainfall_piezo.1_hour")
-    if rolling is not None and rolling.notna().any():
-        # The week arrives on the station's 5-minute grid (so the outdoor
-        # chart's peaks match the summary table). `1_hour` is a ROLLING total,
-        # so the value at each hour boundary is that hour's rain -- resample
-        # with `last`, never `sum`, which would count every reading twelve
-        # times over.
-        hourly = rolling.resample("1h").last()
-    else:
-        # Fall back to the daily accumulator, differenced hour on hour. A fall
-        # that is not a reset cannot be negative rain, so the floor at zero is
-        # safe.
-        total = report.week.get("rainfall_piezo.daily")
-        if total is None or total.dropna().empty:
-            return _empty("Rain by the hour — last 7 days")
-        total = total.resample("1h").last()
-        delta = total.diff()
-        hourly = delta.where(delta >= 0, total).clip(lower=0)
+    summary = rain_summary(report)
+    if summary is None:
+        return _empty("Rain in any 24 hours — last 7 days")
+    hourly, window = summary["hourly"], summary["window"]
+    week_total, peak = summary["total"], summary["peak"]
+    drawable = window.notna()
 
     fig, ax = plt.subplots(figsize=FIGSIZE, layout="constrained")
-    ax.plot(hourly.index, hourly.values, color=nb.SERIES_COLORS[0], linewidth=1.4)
+    ax.plot(window.index, window.values, color=nb.SERIES_COLORS[0], linewidth=1.4)
     ax.fill_between(
-        hourly.index, 0, hourly.fillna(0).values, color=nb.SERIES_COLORS[0], alpha=0.18, linewidth=0
+        window.index,
+        0,
+        window.fillna(0).values,
+        where=drawable.values,
+        color=nb.SERIES_COLORS[0],
+        alpha=0.18,
+        linewidth=0,
     )
 
-    week_total = float(hourly.sum(skipna=True))
-    ax.set_ylabel("in / hour")
+    # The frame's full span, not the drawn span: the blank first day is part of
+    # what the chart is saying, and letting the axis shrink onto the data would
+    # hide it.
+    ax.set_xlim(hourly.index.min(), hourly.index.max())
+
+    ax.set_ylabel("in")
     ax.set_title(
-        f"Rain by the hour — last 7 days  ·  {week_total:.2f} in in total",
+        f"Rain in any 24 hours — last 7 days  ·  {week_total:.2f} in in total",
         loc="left",
         fontsize=11,
         color=nb.INK,
     )
+
     # A dry week is a real answer, and an autoscaled flat line at zero looks
     # like a broken chart rather than a dry week. Give it a floor to sit on.
     if week_total <= 0.001:
@@ -426,6 +577,29 @@ def rain(report) -> bytes:
             fontsize=10,
             color=nb.MUTED,
         )
+    else:
+        # Headroom for the peak label, which otherwise prints through the title.
+        ax.set_ylim(0, max(peak * 1.30, 0.1))
+        if peak > 0.001:
+            _mark_wettest(ax, window)
+        if not drawable.iloc[0] and drawable.any():
+            # Say why the trace starts a day in, rather than leaving it looking
+            # like a dropout.
+            # Anchored at the LEFT of the blank span and offset inwards.
+            # Centred on the span it straddled the y-axis and printed through
+            # the "in" label, because the span always starts at the frame edge.
+            ax.annotate(
+                "no full 24 hours yet",
+                xy=(window.index[0], 0.5),
+                xycoords=("data", "axes fraction"),
+                xytext=(6, 0),
+                textcoords="offset points",
+                ha="left",
+                va="center",
+                fontsize=8.5,
+                color=nb.MUTED,
+            )
+
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
     return _png(fig)

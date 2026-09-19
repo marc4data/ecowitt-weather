@@ -10,10 +10,12 @@ not work for the people it was written for.
 
 from __future__ import annotations
 
+import pandas as pd
+import pytest
 from conftest import build_day, day_bounds
 from test_reporting_report import build
 
-from reporting import config, render
+from reporting import charts, config, render
 
 
 def rendered(conn, day_str, frame, **kwargs):
@@ -274,3 +276,124 @@ def test_the_band_segments_span_exactly_the_width(fixture_db):
         checked += 1
         assert abs(sum(widths) - 100) < 0.5, f"row sums to {sum(widths):.1f}%, not 100"
     assert checked >= 2, "expected the marker row and the scale row"
+
+
+# --------------------------------------------------------------------------
+# The rain chart (R-001)
+#
+# It plots a TRAILING 24-HOUR TOTAL, and there are two ways to get that wrong
+# that both produce a chart which looks entirely reasonable: totalling the
+# rolling series for the headline figure (about 24x too much), and drawing a
+# window that has less than 24 hours behind it (too little, at the left edge,
+# forever). Both are held down here rather than left to a reading of the code.
+# --------------------------------------------------------------------------
+
+
+class _WeekOnly:
+    """The only thing the rain chart reads off a report is `week`."""
+
+    def __init__(self, week):
+        self.week = week
+
+
+def rain_week(hourly_inches, *, start="2026-09-06 00:00"):
+    """A 5-minute week frame whose `1_hour` reads back as the given hourly rain.
+
+    `1_hour` is a ROLLING hour on the real station, and the chart samples it at
+    each hour boundary with `last`. So only the final reading of each hour has
+    to carry that hour's total for the fixture to be honest about what the
+    resample sees -- and that reading lands ON the boundary, which is why the
+    grid starts five minutes in: the hour ending 01:00 is the bucket
+    (00:00, 01:00], and its last reading is the one stamped 01:00.
+    """
+    index = pd.date_range(start, periods=len(hourly_inches) * 12, freq="5min") + pd.Timedelta(
+        minutes=5
+    )
+    values = []
+    for inches in hourly_inches:
+        values += [float("nan") if inches is None else 0.0] * 11
+        values.append(float("nan") if inches is None else float(inches))
+    return _WeekOnly(pd.DataFrame({"rainfall_piezo.1_hour": values}, index=index))
+
+
+def test_rain_chart_plots_a_trailing_24_hour_total():
+    """0.1 in in hour 0 is on the chart for 24 hours, then falls out of it."""
+    hours = [0.1] + [0.0] * 40
+    window = charts.rain_summary(rain_week(hours))["window"]
+
+    # Hour 23 is the first point with a full 24 hours behind it, and that 24
+    # hours contains the whole 0.1 in.
+    assert window.iloc[23] == pytest.approx(0.1)
+    # Still inside the window at hour 23 + 0, gone once hour 0 ages out.
+    assert window.iloc[24] == pytest.approx(0.0), "the 0.1 in should have aged out"
+    assert window.iloc[30] == pytest.approx(0.0)
+
+    # And a run of rain accumulates across the window rather than being read
+    # one hour at a time.
+    spread = charts.rain_summary(rain_week([0.02] * 12 + [0.0] * 29))["window"]
+    assert spread.iloc[23] == pytest.approx(0.24)
+
+
+def test_rain_headline_total_is_the_hourly_sum_not_the_rolling_sum():
+    """🚨 The guard. Summing 168 rolling values counts every hour ~24 times."""
+    hours = [0.02] * 12 + [0.0] * 156  # a week, 0.24 in of it rain
+    summary = charts.rain_summary(rain_week(hours))
+
+    assert summary["total"] == pytest.approx(0.24), "the week total is the hourly sum"
+    # What the wrong answer would look like, stated so the test says WHY it is
+    # wrong rather than just asserting a number.
+    rolling_sum = float(summary["window"].sum(skipna=True))
+    assert rolling_sum > 5 * summary["total"], (
+        "the fixture has to be able to tell the two apart -- if the rolling sum "
+        "were close to the hourly one this test would pass on a broken chart"
+    )
+
+
+def test_rain_leading_edge_is_blank_rather_than_short():
+    """The first 23 hours have less than a day behind them. Draw nothing."""
+    window = charts.rain_summary(rain_week([0.05] * 48))["window"]
+    assert window.iloc[:23].isna().all(), "a partial window must not be drawn low"
+    assert window.notna().iloc[23:].all()
+    # min_periods=22 alone would have let these two through on the 22 and 23
+    # readings that are all the frame has.
+    assert pd.isna(window.iloc[21]) and pd.isna(window.iloc[22])
+
+
+def test_rain_drops_a_window_with_more_holes_than_grid_coverage_allows():
+    """Two missing hours is tolerated; three drops the window (90%, as §grid).
+
+    Steady rain at 0.01 in/hour, so the arithmetic is easy to check by hand: the
+    window ending at hour 31 spans hours 8-31, and every hour present in it
+    contributes 0.01. A tolerated hole contributes nothing, which is why the
+    answer is 0.22 rather than 0.24 -- a window with holes can only understate,
+    and that is the whole reason for a floor on how many are allowed.
+    """
+    two_holes = [0.01] * 30 + [None, None] + [0.01] * 16
+    window = charts.rain_summary(rain_week(two_holes))["window"]
+    assert window.iloc[31] == pytest.approx(0.22), "22 of 24 hours present, at 0.01 each"
+
+    three_holes = [0.01] * 30 + [None, None, None] + [0.01] * 15
+    window = charts.rain_summary(rain_week(three_holes))["window"]
+    assert pd.isna(window.iloc[32]), "21 of 24 is below 90%; draw nothing rather than 0.21"
+
+
+def test_rain_chart_still_draws_a_dry_week():
+    """A dry week is the common case here, and it must not look broken."""
+    png = charts.rain(rain_week([0.0] * 168))
+    assert png.startswith(b"\x89PNG")
+    assert charts.rain_summary(rain_week([0.0] * 168))["total"] == pytest.approx(0.0)
+
+
+def test_rain_hours_are_stamped_when_they_end_not_when_they_began():
+    """A left-labelled resample put every point about an hour early.
+
+    `1_hour` is a trailing total, so the reading at 01:00 is the rain that fell
+    between 00:00 and 01:00 and belongs at 01:00. A plain `resample("1h")`
+    labels that bucket 00:00, and the peak label then names the wrong hour.
+    """
+    hourly = charts._rain_hourly(rain_week([0.1] + [0.0] * 40, start="2026-09-06 00:00"))
+    wet = hourly[hourly > 0]
+    assert len(wet) == 1
+    assert wet.index[0] == pd.Timestamp("2026-09-06 01:00"), (
+        "the hour ending 01:00 must be stamped 01:00, not 00:00"
+    )

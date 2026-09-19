@@ -485,7 +485,7 @@ def html_body(report, images: dict[str, bytes]) -> str:
         blocks.append(_img("range", "Daily outdoor high-to-low range, four Monday-to-Sunday weeks"))
     if "rain" in images:
         blocks.append(_h("Rain"))
-        blocks.append(_img("rain", "Rainfall by the hour over the last 7 days"))
+        blocks.append(_img("rain", "Rainfall in any trailing 24 hours, over the last 7 days"))
 
     blocks.append(_h("The house"))
     blocks.append(_house_block(report))
