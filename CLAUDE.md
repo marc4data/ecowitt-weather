@@ -601,20 +601,36 @@ asks. A request gets its number when Marc makes it, not when a round starts.
    round that adds or loosens a check argues against that standard explicitly.
 ### Handing a round across surfaces
 
-**Observed 2026-09-17: `project-round-close` is installed in Cowork and NOT in
-Claude Code.** `/project-round-close` and `/anthropic-skills:project-round-close`
-were both tried in Code and neither resolved; this project's `.claude/` carries
-no plugin or marketplace config. So **neither direction of the handoff depends
-on a slash command**:
+**Observed 2026-09-17 22:14 in Claude Code: `/project-round-close` resolves.**
+The session names its base directory as Marc's personal install,
+`~/.claude/skills/project-round-close/` (20,562 bytes, sha256 begins
+`b0fa922909ab2052`). The earlier reading — that neither spelling resolved in
+Code — was true when it was taken, at roughly 16:00, before that file existed
+at 16:04. R-004's criterion is met.
 
 | direction | the cell |
 |---|---|
-| Cowork → Code | `Read and execute claude_work/prompts/<id>.md` — a path, which any surface understands |
+| Cowork → Code | `/project-round-close <abbr>-<session>-R-###` — seen working in Code 2026-09-17 |
 | Code → Cowork | `Review round <id> — report at claude_work/reports/<id>-report.md` — plain English; Cowork invokes the skill itself |
 
-Do not put a slash command in either cell until it has been **seen working on
-that surface**, and then record it here rather than inferring it from how the
-other surface addresses the skill.
+**The Code → Cowork cell stays prose deliberately.** The skill resolves in
+Cowork, but the *slash spelling* has not been seen working there, and that is a
+different observation. Do not put a slash command in a cell until it has been
+seen working on that surface, and then record it here rather than inferring it
+from how the other surface addresses the skill.
+
+⚠️ **Two independent copies now resolve, and nothing keeps them in step.**
+`/project-round-close` reads the personal install above.
+`/anthropic-skills:project-round-close` reads a synced, plugin-backed copy
+registered on Marc's account at 16:05 — one minute after the personal file was
+written, though nothing observed here proves that one produced the other.
+✅ **Both spellings are now observed working in Code**: the namespaced one ran
+R-001's second sitting at 22:24 and named the synced tree as its base directory,
+which upgrades the copy-to-spelling mapping above from inference to observation.
+Measured: separate inodes, link count 1 each, neither a symlink, `cmp` clean.
+They are identical today by shared origin, not by mechanism. Edit one and the
+other keeps the old text, and which one a session gets depends on which name was
+typed. Keep one copy, not two — which one is Marc's call (R-004).
 
 5. **A staged break that comes back green is the finding.** Every round proves
    its guard can fail and names the test that went red.
