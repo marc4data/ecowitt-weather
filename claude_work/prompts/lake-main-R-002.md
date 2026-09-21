@@ -1,98 +1,83 @@
-# lake-main-R-002 — `rainfall_piezo.1_hour` is a rolling window tagged as a resetting accumulator
+# lake-main-R-002 — round 2: exempt `1_hour`, keep 21 August failing
 
 **Session:** `main` · **Register:** `claude_work/lake_request_register.md` (R-002)
 
-## Why this round, and why now
+**First, commit Cowork's edits sitting in the tree** — this prompt and the
+register. Cowork does not write to git over the bridge (CLAUDE.md §14).
 
-Two of the five consecutive ATTENTION emails that went to Marc, Stacy and Tad on
-9–13 Sep were `rain accumulators only reset to zero — 6 irregular`. Every cited
-sample in the 12 Sep email is `rainfall_piezo.1_hour` stepping down in
-consecutive five-minute slots (15:15→0.08, 15:20→0.06, 15:25→0.05) on a day with
-0.09 in of rain. The email told the household it was "a known quirk of the piezo
-gauge".
+## Where round 1 left it
 
-**The hypothesis:** `1_hour` is a trailing 60-minute total. It decays to
-non-zero values by design every time rain ages out of its window. The catalog
-tags it `kind='accumulator'` (`schema/metric_catalog_seed.sql:47`), and the
-check at `notebooks/ecowitt_daily.py:354-367` flags any accumulator fall that
-does not land on zero. So the check is wrong about the metric, not the metric
-wrong about the rain. R-001 added a second piece of evidence: on 25 Aug `1_hour`
-peaked at 0.17 in on a day whose `daily` finished at 0.09 in.
+Round 1 stopped at step 1, correctly. Replaying 51 days gave 55 irregular
+entries: 53 are `rainfall_piezo.1_hour`, and two are real —
+`daily` 0.07→0.06 and `weekly` 0.10→0.09 at **2026-08-21 06:45**, when the
+console re-zeroed and a 30-minute hole followed. Cowork corroborated it from the
+21 Aug replay email (`13 irregular`, `283/288`, `longest single gap 25 min`).
 
-That is a hypothesis. **This round tests it before it fixes anything.**
+**Decision (Cowork's): exempt `1_hour` only. 21 August keeps failing.** The
+check fires once in 51 days on something that genuinely went backwards. That is
+the opposite of "a warning that is usually nothing" (CLAUDE.md §14, trap 4), so
+it stays. Round 1's second option — also forgiving a fall that coincides with a
+re-zero — is rejected: it would have silenced the only real event on record.
 
-## Step 1 — measure, and stop if the measurement disagrees
+Step 1 is done; don't redo it. Reuse round 1's replica and A/B harness.
 
-Replay the check over **every day since 2026-08-01** and list every irregular
-entry it produces, grouped by metric. Report the table.
+## The change
 
-- **If every entry is `rainfall_piezo.1_hour`** — the hypothesis holds; go to
-  step 2.
-- **If any entry is another accumulator** (`daily`, `weekly`, `monthly`,
-  `yearly`, `event`) — **stop.** Those are genuine backwards steps, the check is
-  earning its keep on them, and the fix below would be incomplete. Report the
-  offenders with timestamps and values, and hand back without changing code.
+1. **Exemption in the check, not the catalog.** A named module-level set in
+   `notebooks/ecowitt_daily.py`, holding exactly `rainfall_piezo.1_hour`,
+   commented with R-002 and the evidence. No pattern-matching on names. The
+   catalog is not touched — it lives in the production database too, and
+   `metric_accumulator_needs_last` ties `kind` to `resample_rule`. If you think
+   the catalog should still change, report it as a finding with its migration.
+2. **Replace the household-facing text** at `src/reporting/config.py:286-289`.
+   It currently says "A known quirk of the piezo gauge", which is now false.
+   After this round the check only fires on a real backwards step. **Do not
+   state a cause**: the console re-zero is one observation, not a pattern.
+   Match the plain register of the entries around it. Put before and after in
+   the report — Marc approves it in the close, because it's what three people
+   get told.
 
-Also note from the replay whether `rainfall_piezo.event` resets to zero cleanly;
-the catalog says "resets per event" and nobody has checked.
+## What it changes, in numbers
 
-## Step 2 — the fix
+`python -m reporting.matrix` over the whole record, before and after. Report:
 
-**Exempt rolling totals from this one check, in the check. Do not reclassify
-the catalog.** Cowork's call, and the reason: `kind` lives in the live database
-on the VM as well as the seed, and `metric_accumulator_needs_last` couples it to
-`resample_rule` — reclassifying is a migration on production for a problem one
-check has. Name the exemption explicitly (a module-level set, commented with
-R-002 and the evidence), not by pattern-matching metric names.
-
-If, having done it, you think the catalog *should* change — report that as a
-finding with the migration it would need. Do not do it.
-
-**Correct the household-facing text.** `src/reporting/config.py:286-289` says
-"A known quirk of the piezo gauge." After this round the check only fires on a
-genuine backwards step, which is not a gauge quirk. Draft a replacement in the
-same plain register the other entries use, and put before/after in the report —
-Marc reads that text as what three people are told, so it is his to approve in
-the close.
-
-## Step 3 — what it changes, in numbers
-
-Run `python -m reporting.matrix` over the whole record before and after. Report:
-
-- how many days this check's verdict changes, and to what;
-- how many of those days would have been ATTENTION emails that now go out as
-  good — this is the number that decides whether R-003 (subject-line gating) is
-  still worth building, so measure it rather than estimate it.
+- the days where this check's verdict changes. Expected: 8 flip to PASS, and
+  21 Aug still FAILs with exactly 2 irregular entries (`daily`, `weekly`,
+  06:45). **If the numbers differ from that, say so and say why before going
+  on.**
+- 🚨 **the day-level outcome, which is the number R-003 needs.** For each
+  flipped day, is the email that day now *good*, or still ATTENTION because of
+  another check? Use the email's own severity logic, not just this one check's
+  verdict.
 
 ## Definition of done
 
-- Step 1's table in the report, whichever way it came out.
-- The check still **fails** on a genuine backwards step in a real accumulator.
-  🚨 **Stage both breaks and name the test that went red for each:**
-  1. a `daily` series falling 0.10 → 0.05 mid-day must still FAIL;
-  2. remove the exemption and the 12 Sep `1_hour` decay must FAIL again.
-  A guard nobody has watched fail is not a control.
-- Tests live wherever the check is already tested; say where.
-- `pytest` green, count stated. `ruff check .` no worse than its current 16,
-  all in `notebooks/audit.ipynb`.
-- Render 12 Sep 2026 to `data/reports/preview/` (dry run) and state its new
-  subject line.
-- **Commit locally. Do not push, do not deploy** — CLAUDE.md §14. Deploying
-  R-001 and R-002 together is a decision waiting on Marc.
+- 🚨 **Two staged breaks, each naming the test that goes red:**
+  1. remove the exemption → the 12 Sep `1_hour` decay FAILs again;
+  2. widen the exemption to cover `rainfall_piezo.daily` → 21 Aug stops
+     failing. This proves the guard still sees real backwards steps.
+  Use **real 21 Aug and 12 Sep data as fixtures** if the test harness can hold
+  them; synthetic series only if it can't, and say which you used.
+- `pytest` green, count stated. `ruff check .` no worse than the 16 in
+  `notebooks/audit.ipynb`.
+- Render 12 Sep and 21 Aug to `data/reports/preview/` (dry run) and state both
+  subject lines.
+- **Commit locally. Do not push, do not deploy.** Deploying R-001 and R-002
+  together is waiting on Marc.
+- Add a **"Round 2"** section to `claude_work/reports/lake-main-R-002-report.md`.
+  Leave round 1's text as it is.
 
 ## Traps
 
-- `notebooks/ecowitt_daily.py` is **production** — `src/reporting/shared.py`
-  imports it. The notebook `explore_daily.ipynb` imports it too.
-- `grid coverage`'s 90 % floor and the house checks are not this round's.
-- R-003 (ATTENTION in the subject for a data-only failure) is out of scope.
-- Clock in **America/Los_Angeles**, explicitly — R-001's first sitting came out
-  two hours off by stamping Central.
+- `notebooks/ecowitt_daily.py` is production. `src/reporting/shared.py` and
+  `explore_daily.ipynb` both import it.
+- R-003 (the subject line for data-only failures) is out of scope. Measure for
+  it; don't build it.
+- `nb.ensure_db()` still connects to the Docker Postgres on 5433 (R-006). Use
+  `LOCAL_PORT=5434 ./infra/tunnel.sh` as round 1 did, and close it after.
+- Clock in **America/Los_Angeles**, explicitly.
 
 ## How the reply ends
-
-Report to `claude_work/reports/lake-main-R-002-report.md`. Then the return
-cell, then the clock line:
 
 ```
 /anthropic-skills:project-round-close lake-main-R-002
