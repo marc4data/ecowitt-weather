@@ -40,6 +40,11 @@ CATALOG = [
     ("temp_and_humidity_ch1.humidity", "instantaneous", "%", "mean"),
     ("wind.wind_gust", "extremum", "mph", "max"),
     ("rainfall_piezo.daily", "accumulator", "in", "last"),
+    ("rainfall_piezo.weekly", "accumulator", "in", "last"),
+    # Catalogued `accumulator` like the two above, but really a trailing
+    # 60-minute window -- R-002. It is in the fixture catalog precisely so a
+    # test can tell the two apart.
+    ("rainfall_piezo.1_hour", "accumulator", "in", "last"),
     ("solar_and_uvi.solar", "instantaneous", "W/m²", "mean"),
     ("battery.haptic_array_battery", "diagnostic", "V", "carry"),
     ("battery.haptic_array_capacitor", "diagnostic", "V", "carry"),
@@ -160,6 +165,8 @@ def build_day(
             "temp_and_humidity_ch1.humidity": 46.0 + (hours % 2),
             "wind.wind_gust": (warm % 7) + 1,
             "rainfall_piezo.daily": 0.0,
+            "rainfall_piezo.weekly": 0.0,
+            "rainfall_piezo.1_hour": 0.0,
             "solar_and_uvi.solar": (1 - abs(hours - 13) / 7).clip(0, 1) * 900,
             "battery.haptic_array_battery": 3.28,
             # Charges through the day and drains overnight, like the real one.

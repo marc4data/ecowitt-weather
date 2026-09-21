@@ -147,6 +147,31 @@ BATTERY_QUANTISATION_V = 0.1
 # kind='diagnostic'.
 BATTERY_STALE_DAYS = 30
 
+# --- rain accumulators ------------------------------------------------------
+# Metrics the catalog calls `accumulator` that are really ROLLING WINDOWS, and
+# so fall to non-zero values by design every time rain ages out of the window.
+# `rain accumulators only reset to zero` must skip exactly these; every other
+# accumulator genuinely only climbs until it resets, and a fall that misses
+# zero there is a lost total worth waking somebody for.
+#
+# R-002, measured over 2026-08-01..2026-09-20 (51 days, every day with data):
+# 55 irregular entries, 53 of them `rainfall_piezo.1_hour`. The other two are
+# `daily` 0.07->0.06 and `weekly` 0.10->0.09 in one slot at 2026-08-21 06:45,
+# when `1_hour`, `event` and `rain_rate` all reset to 0.00 and a 30-minute hole
+# followed. Those two are real and MUST keep failing -- they are the only
+# genuine backwards step on record, and the check fires on them once in 51
+# days, which is the opposite of a warning that is usually nothing.
+#
+# Named explicitly, never pattern-matched: `daily`, `weekly`, `monthly` and
+# `yearly` are all "rain over a period" by name too, and a prefix or suffix
+# rule would swallow the one case this check exists to catch.
+#
+# The catalog is deliberately NOT changed. `kind` lives in the production
+# database as well as the seed, and `metric_accumulator_needs_last` ties it to
+# `resample_rule`, so reclassifying is a migration on production for something
+# one check gets wrong.
+ROLLING_NOT_ACCUMULATING = frozenset({'rainfall_piezo.1_hour'})
+
 # --- liveness ---------------------------------------------------------------
 # `no sensor dropped out` compares yesterday against the day before, which
 # answers "did something disappear" but not "how long has it been gone". After
@@ -356,6 +381,8 @@ def run_checks(conn, day, meta, start, end):
     odd_resets = []
     for metric in sorted(today_metrics):
         if meta.get(metric, {}).get('kind') != 'accumulator':
+            continue
+        if metric in ROLLING_NOT_ACCUMULATING:
             continue
         series = day[metric].dropna()
         drops = series.diff() < 0

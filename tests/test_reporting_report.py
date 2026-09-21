@@ -273,6 +273,82 @@ def test_the_house_leads_when_several_checks_fail(fixture_db):
     assert "rain accumulators only reset to zero" in failing
 
 
+# --- R-002: a rolling window is not a resetting accumulator ----------------
+#
+# Both series below are REAL, read off the production database on 2026-09-21 and
+# recorded here. The fixture harness builds synthetic weather, but these two
+# numbers are the whole point of the round, so inventing them would test the
+# test rather than the check.
+
+# rainfall_piezo.1_hour, 2026-09-12 14:50..16:00 local. A trailing 60-minute
+# total decaying as rain ages out of the window -- the behaviour that put
+# "6 irregular" in front of three people.
+SEP12_1_HOUR_DECAY = [0.09, 0.09, 0.09, 0.09, 0.09, 0.08, 0.06, 0.05,
+                      0.05, 0.04, 0.02, 0.01, 0.01, 0.01, 0.0]
+
+# 2026-08-21 06:30..06:45 local, the console re-zero. daily and weekly each
+# lose a cent-inch and land ABOVE zero, which rain cannot do.
+AUG21_DAILY = [0.06, 0.06, 0.07, 0.06]
+AUG21_WEEKLY = [0.09, 0.09, 0.10, 0.09]
+
+
+def _put(frame, metric, first_stamp, values):
+    """Write a recorded series into the fixture frame at a wall-clock time."""
+    h, m = (int(x) for x in first_stamp.split(":"))
+    start = frame.index[0].normalize() + pd.Timedelta(hours=h, minutes=m)
+    for i, v in enumerate(values):
+        frame.loc[start + pd.Timedelta(minutes=5 * i), metric] = v
+    return frame
+
+
+def test_a_rolling_hourly_total_decaying_is_not_an_irregular_reset(fixture_db):
+    """12 Sep 2026: `1_hour` steps 0.08 -> 0.06 -> 0.05 as rain ages out.
+
+    Catalogued `accumulator`, so before R-002 every one of those steps counted
+    as a rain total going backwards. It is a trailing window; decaying is what
+    it is for.
+    """
+    start, end = day_bounds("2026-09-12")
+    frame = _put(build_day(start, end), "rainfall_piezo.1_hour", "14:50", SEP12_1_HOUR_DECAY)
+
+    report = build(fixture_db, "2026-09-12", frame)
+    row = report.checks[report.checks.check == "rain accumulators only reset to zero"].iloc[0]
+    assert row.verdict == "PASS", (
+        f"a rolling window decayed and the check called it irregular: {row.note}"
+    )
+
+
+def test_a_real_backwards_step_in_a_true_accumulator_still_fails(fixture_db):
+    """21 Aug 2026: `daily` 0.07 -> 0.06 and `weekly` 0.10 -> 0.09 in one slot.
+
+    The exemption must not reach these. They are the only genuine backwards
+    step in the record, and the check earns its keep once in 51 days on them.
+    The COUNT is asserted, not just the verdict: an exemption widened to cover
+    `daily` would still leave `weekly` failing, and a bare `verdict == FAIL`
+    would sail straight through that.
+    """
+    start, end = day_bounds("2026-08-21")
+    frame = build_day(start, end)
+    _put(frame, "rainfall_piezo.daily", "06:30", AUG21_DAILY)
+    _put(frame, "rainfall_piezo.weekly", "06:30", AUG21_WEEKLY)
+
+    report = build(fixture_db, "2026-08-21", frame)
+    row = report.checks[report.checks.check == "rain accumulators only reset to zero"].iloc[0]
+    assert row.verdict == "FAIL"
+    assert row.measured == "2 irregular", f"expected both metrics flagged, got {row.measured!r}"
+    assert "rainfall_piezo.daily" in row.note
+    assert "rainfall_piezo.weekly" in row.note
+
+
+def test_the_exemption_names_its_metric_rather_than_matching_a_pattern(fixture_db):
+    """`daily`, `weekly`, `monthly`, `yearly` are all period names too.
+
+    A prefix/suffix rule over `rainfall_piezo.*` would swallow the one case
+    this check exists to catch, so the set is pinned to exactly one member.
+    """
+    assert set(daily.ROLLING_NOT_ACCUMULATING) == {"rainfall_piezo.1_hour"}
+
+
 def test_action_email_says_so_when_no_contact_is_configured(fixture_db):
     """§11.5 is open, and a missing instruction has to look missing."""
     start, end = day_bounds("2026-08-16")
