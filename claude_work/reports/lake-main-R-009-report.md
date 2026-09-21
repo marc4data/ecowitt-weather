@@ -423,3 +423,183 @@ Both would have passed a syntax check and failed at runtime:
 ---
 
 **Round 3 — Start 2026-09-21 8:58 AM / End 9:03 AM : 04:20**
+
+---
+
+# Round 4 — the verify now tests what 07:00 runs
+
+**Start 2026-09-21 9:54 AM.** Rounds 1–3 above are unchanged.
+
+## R4.0 First, the thing the prompt said to lead with
+
+**The timer is enabled and the unit is healthy.** Tomorrow's 07:00 email will go
+out, from the new code.
+
+```
+VERSION:            9833547c2fb3657162a1fa160982506fc694c204-dirty
+exemption:          present (2 matches)
+timer is-enabled:   enabled
+next run:           Tue 2026-09-22 12:02:54 UTC  (07:02 Central)
+SMTP_USER shape:    bare address
+```
+
+## R4.1 🚨 The defect was the hand-picked list, not the missing name
+
+`run_on_vm()` passed four variables it chose itself —
+`LAKEHOUSE_EMAIL_TO`, `_TEST_TO`, `_FROM`, `_STATION_URL` — and neither
+`LAKEHOUSE_SMTP_USER` nor `LAKEHOUSE_REPLY_TO`. Two consequences, and the second
+is the one that matters:
+
+1. The verify could not send whatever the operator set, which is what Marc hit
+   twice.
+2. **The verify was never testing what 07:00 runs.** systemd starts the service
+   with the unit's `Environment=` lines; the verify ran with a different set. A
+   verify that exercises a different environment from the timer proves nothing
+   about the timer, and it can pass while the scheduled run fails — or, as here,
+   fail while the scheduled run would have been fine.
+
+`run_on_vm` now reads `Environment=` on the box and `execve`s with it, the same
+shape `infra/run_as_unit.sh` uses. Adding `SMTP_USER` to the list would have
+fixed Marc's symptom and left the defect in place for the next variable.
+
+## R4.2 The audit found a second one, unfired
+
+The prompt asked which other `CHANGEME-*` values the installer substitutes but
+`--from-unit` did not read back. Seven are substituted; five were read.
+
+| value | was read back? |
+|---|---|
+| `LAKEHOUSE_EMAIL_TO` / `_TEST_TO` / `_FROM` | yes |
+| `LAKEHOUSE_STATION_URL` / `_REPLY_TO` | yes |
+| **`LAKEHOUSE_SMTP_USER`** | **no** — this is what broke |
+| **`ANTHROPIC_WORKSPACE_ID`** | **no** — same bug, one redeploy from firing |
+
+`ANTHROPIC_WORKSPACE_ID` is present in the live unit, and a `--from-unit`
+redeploy would have substituted it with the empty default and blanked it. It
+was not a symptom anyone had seen yet. Both are read back now, as optional,
+with the same env-disagreement refusal as the rest.
+
+**This is why the prompt asked for an audit rather than a fix.** The measurement
+was `grep -n CHANGEME` against both files and comparing two lists, which is
+reproducible; "these are all of them" is only as good as that comparison, so the
+lists are above rather than a claim that the class is closed.
+
+## R4.3 Refuse before installing, not after
+
+A display name in `From` is legal mail and illegal SMTP auth. The send refuses
+on it either way; the difference is whether the refusal arrives **before** the
+install or after. After leaves a live box holding a unit that cannot mail, which
+is what happened.
+
+### Staged break
+
+The live unit has a valid bare SMTP user, so the refusal cannot be provoked
+end-to-end without editing the production unit. Instead the **shipped python
+block was extracted from `deploy_report.sh` by its own heredoc markers** — 56
+lines, the real bytes, not a copy — and fed crafted unit environments:
+
+```
+--- BREAK: display-name From, SMTP user withheld from BOTH unit and env ---
+exit 1
+REFUSED: LAKEHOUSE_EMAIL_FROM carries a display name, and no bare address is
+available for LAKEHOUSE_SMTP_USER (the unit has none, and none is set here).
+SMTP auth needs the address alone. Set LAKEHOUSE_SMTP_USER='someone@example.com'
+and re-run. Refusing before installing: the send would fail afterwards and leave
+this box holding a unit that cannot mail.
+```
+
+**Two controls, because a refusal that fires on everything is not a guard:**
+
+| case | result |
+|---|---|
+| display-name From **with** a bare SMTP user | exit 0, proceeds, `SMTP user: bare address` |
+| bare From, no SMTP user at all | exit 0, proceeds — nothing to refuse |
+
+⚠️ **Stated as what it is:** the refusal logic was exercised against the shipped
+code with a crafted input, not against a real broken box. That is evidence about
+the logic; it is not an end-to-end deploy.
+
+## R4.4 The closing message no longer asserts a timer state
+
+It said *"Everything is installed and the timer is OFF, which is the right
+state."* **This script never disables a timer** — it only ever enables one. On a
+redeploy of a working box the old sentence was exactly backwards: the new code
+is installed and the old schedule is still live and about to run it.
+
+It now reads `systemctl is-enabled` from the VM and says which case it is, with
+the enabled case carrying the warning that actually applies:
+
+> ⚠️ THE TIMER WAS ALREADY ENABLED and this script has not touched it. The newly
+> installed code is what will run at 07:00, and its test send just failed.
+
+## R4.5 `bash -n` was not trusted, and it mattered again
+
+Rendering the new `run_on_vm` command showed it relies on bash's `$'...'`
+ANSI-C quoting surviving to the **remote** shell, where it is re-parsed:
+
+```
+printf '%s' $'import os, shlex, subprocess, sys\nraw = subprocess.run(...' > /tmp/ecowitt_verify.py
+sudo -u ecowitt python3 /tmp/ecowitt_verify.py --test
+```
+
+**My first round-trip test failed**, and the failure was my test's: I quoted the
+substitution, which prevents the re-parse that makes the mechanism work. Piping
+the rendered string into a fresh `bash -s` — which is what the remote actually
+does — round-trips correctly, newlines and all.
+
+Checked rather than assumed: the VM's login shell is **`/bin/bash`**. `/bin/sh`
+there is dash, which does **not** support `$'...'`, but `--command` runs under
+the login shell. `run_as_unit.sh` already depends on this; noting it as a shared
+dependency rather than a new risk.
+
+## R4.6 Step 2 — the proofs, read-only
+
+| proof | result |
+|---|---|
+| `VERSION` | `9833547…-dirty` |
+| `ROLLING_NOT_ACCUMULATING` installed | present |
+| `systemctl is-enabled ecowitt-report.timer` | **enabled** |
+| next run | Tue 2026-09-22 12:02:54 UTC = **07:02 Central** |
+| unit's `LAKEHOUSE_SMTP_USER` | **bare address** |
+| test email (Marc's `run_as_unit.sh --test`) | `for_date 2026-09-20, mode test, sent 2026-09-21 16:42:48 UTC` = **11:42 Central** |
+
+Dry replay of 12 Sep through `infra/run_as_unit.sh --for-date 2026-09-12`, with
+the unit's own environment, nothing sent:
+
+```
+2026-09-12  WARN   REPLAY — Lake house Ecowitt System checks are good with a WARNING
+                   for Sat, Sep 12th - indoor humidity 49–69 % — not current conditions
+  [ok  ] rain accumulators only reset to zero: none
+  title: most in the last day: {last_day_max:.2f} in
+```
+
+All three as expected: **WARNING** in capitals (R-010), the rain check **ok**
+(R-002), the R-011 headline in the installed `charts.py`.
+
+`email_log` also shows production sends at ~12:02 UTC on 18, 19, 20 and 21 Sep —
+the household has been receiving the daily email throughout, which is what
+round 1's CLAUDE.md correction was about.
+
+⚠️ **Today's 07:02 production email was the OLD code.** It ran at 12:02:28 UTC,
+before Marc's deploy. Tomorrow's is the first the household sees with any of
+this in it.
+
+## R4.7 Step 3 — pushed
+
+```
+e915fcf..727de65  daily-email -> daily-email
+```
+
+`daily-email` only. **Not merged to `master`** — that is a separate decision.
+
+## R4.8 What I did not do
+
+- Did not deploy. The script changes in this round are **committed and pushed
+  but not installed**; the VM still runs `9833547-dirty`. They take effect on
+  the next `--from-unit` run, which is Marc's to make.
+- Did not merge to `master`.
+- Did not edit the live unit to provoke the missing-address refusal.
+
+---
+
+**Round 4 — Start 2026-09-21 9:54 AM / End 10:02 AM : 07:35**
