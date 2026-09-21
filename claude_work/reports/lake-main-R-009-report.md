@@ -256,3 +256,170 @@ sees the old email if this never runs, because the timer is already on.
 ---
 
 **Round 2 — Start 2026-09-21 8:49 AM / End 8:53 AM : 03:38**
+
+---
+
+# Round 3 — `--from-unit`, so Marc deploys with one command
+
+**Start 2026-09-21 8:58 AM.** Rounds 1 and 2 above are unchanged.
+**The deploy was not run, as instructed.** Nothing was installed and nothing
+was sent.
+
+## R3.1 The command Marc runs
+
+From the repo root, in his own terminal:
+
+```bash
+./infra/deploy_report.sh --from-unit
+```
+
+That is the whole thing. No values to type. To see what it would do first,
+without installing or sending:
+
+```bash
+./infra/deploy_report.sh --from-unit --print-plan
+```
+
+## R3.2 What `--from-unit` does
+
+Reads `LAKEHOUSE_EMAIL_TO`, `LAKEHOUSE_EMAIL_TEST_TO`, `LAKEHOUSE_EMAIL_FROM`,
+`LAKEHOUSE_STATION_URL` and `LAKEHOUSE_REPLY_TO` back out of the installed
+`ecowitt-report.service` over IAP, and puts them straight back.
+
+It reuses `infra/run_as_unit.sh:29-39`'s shape rather than reinventing it —
+`systemctl show … -p Environment --value` plus `shlex.split` — pointed the other
+way: that script runs on the VM and execs with the unit's environment, this one
+brings the values back to the laptop. **`shlex` is the load-bearing part.**
+Round 1 split the same output on whitespace and reported two present values as
+missing, because a display name in `From` legitimately contains spaces.
+
+The values are `eval`'d straight into variables. They never reach a file, a log,
+this repo or the script's output — it prints counts:
+
+```
+    3 addresses + 2 optional, from the unit, unchanged
+```
+
+## R3.3 🚨 Three refusals, all exercised against the real VM
+
+The prompt asked for a staged break. A shell script has no pytest here, so **the
+refusal output itself is the evidence**, quoted, with its exit status.
+
+**1 — the unit is not installed** (`UNIT=ecowitt-nonesuch.service`):
+
+```
+==> Reading the addresses back from ecowitt-nonesuch.service on ecowitt-db
+REFUSED: ecowitt-nonesuch.service reported no Environment. Is the report deployed
+on this box? --from-unit is for redeploys; a first install takes the values from
+the environment.
+```
+
+`exit status: 2`
+
+**2 — a value set in both places, disagreeing** (`LAKEHOUSE_EMAIL_TO` exported
+to something else):
+
+```
+==> Reading the addresses back from ecowitt-report.service on ecowitt-db
+REFUSED: LAKEHOUSE_EMAIL_TO is set in your environment AND in the unit, and they
+differ. Unset it, or deploy without --from-unit. Not choosing for you.
+```
+
+`exit status: 2`
+
+This is the one worth having. A redeploy that silently picks one of two
+disagreeing recipient lists changes who gets the morning email, and nothing
+downstream would show it.
+
+**3 — a required address missing from the unit** names which one. Not
+exercised against production, because making it fire would mean editing the
+live unit file to remove a recipient. Stated as untested rather than implied to
+be proven — it shares the refusal path the other two took, which is evidence
+about the path, not about that branch.
+
+`UNIT` is overridable for exactly this reason: refusal 1 runs the real code
+against a real absence, rather than a second code path invented to be tested.
+
+## R3.4 `--print-plan`, run against the live VM
+
+```
+==> Reading the addresses back from ecowitt-report.service on ecowitt-db
+    3 addresses + 2 optional, from the unit, unchanged
+
+==> Checking prerequisites
+  secret ecowitt-readonly-password    ok
+  secret ecowitt-emailer-password     ok
+  secret lakehouse-smtp-password      ok
+  database  table=email_log role=ecowitt_emailer
+
+==> PLAN ONLY — nothing has been installed and nothing has been sent.
+
+  instance          ecowitt-db (us-central1-a), project ecowitt-504320
+  unit read         ecowitt-report.service
+  addresses         <3 addresses + optional, from the unit, unchanged>
+  commit to deploy  701c947-dirty
+  verify mode       send (one --test email from the VM, to the test address)
+  timer             enabled ONLY if that verify succeeds
+```
+
+`exit status: 0`
+
+**The exit sits after the preflight, not before it** — so the plan run exercised
+the secret checks and the database role check too. An earlier exit would have
+proven only that the flag parses.
+
+✅ **`701c947-dirty` is the VERSION marker from round 2 working**, caught in the
+act: the tree was dirty because `deploy_report.sh` itself was still uncommitted
+at that moment. After this round's commit a real run records a clean hash.
+
+## R3.5 `bash -n` was not trusted this time
+
+Round 2 found `bash -n` passing on a broken quote, so the IAP command was
+rendered with dummy values and read:
+
+```
+WOULD RUN: gcloud compute ssh DUMMY-VM --zone=DUMMY-ZONE --tunnel-through-iap \
+           --quiet --command=systemctl show ecowitt-report.service -p Environment --value
+```
+
+And the parser was fed a display name containing spaces, to confirm it survives
+the round trip:
+
+```
+LAKEHOUSE_EMAIL_TO=a@b
+LAKEHOUSE_EMAIL_TEST_TO=m@x
+LAKEHOUSE_EMAIL_FROM='Lake House <s@x>'
+LAKEHOUSE_STATION_URL=https://z
+```
+
+The quoting is re-applied by `shlex.quote` on the way out, so `eval` puts it
+back intact — which is the exact thing round 1 got wrong.
+
+### Two ordering bugs, found by reading rather than by `bash -n`
+
+Both would have passed a syntax check and failed at runtime:
+
+1. **`say()` was defined after its first caller.** The new block sits at line 75
+   and `say` was defined at 205, so the first line of a `--from-unit` run would
+   have been `say: command not found`. Moved to line 41, beside `SSH`.
+2. **The refusal message was being echoed twice.** `$(…)` does not capture
+   stderr, and python's `sys.exit("msg")` writes there — so the message was
+   already on screen and `echo "$assignments" >&2` added an empty line after it.
+
+## R3.6 Also updated
+
+- The usage comment at the top of `deploy_report.sh` now documents the redeploy
+  path, which is the usual case.
+- `infra/README.md` gains **"Redeploying a box that is already installed"** with
+  both commands and what the refusals protect.
+
+## R3.7 What I did not do
+
+- **Did not run the deploy.** Not attempted at all this round — the prompt said
+  not to, and Cowork's call is that the gate is Marc's.
+- **Did not push.** Waiting on the deploy's proofs, per the prompt.
+- Added no settings rule granting Code standing deploy rights.
+
+---
+
+**Round 3 — Start 2026-09-21 8:58 AM / End 9:03 AM : 04:20**

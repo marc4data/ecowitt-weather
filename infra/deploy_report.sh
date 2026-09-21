@@ -8,6 +8,15 @@
 #   LAKEHOUSE_STATION_URL='https://www.ecowitt.net/home/index?id=...' \
 #   ./infra/deploy_report.sh
 #
+# REDEPLOYING an already-installed box, which is the usual case:
+#
+#   ./infra/deploy_report.sh --from-unit
+#
+# reads those five values back out of the installed unit instead. Retyping them
+# is how an address with a comment glued to it reached a unit file once
+# (02_DAILY_EMAIL_AS_BUILT §5.3), and the values never reach your shell history.
+# Add --print-plan to check what it would do and exit without installing.
+#
 # ---------------------------------------------------------------------------
 # THE ORDER MATTERS, and it is the whole design of this script.
 #
@@ -29,6 +38,7 @@ ZONE="${ZONE:-us-central1-a}"
 INSTANCE="${INSTANCE:-ecowitt-db}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
 SSH=(gcloud compute ssh "$INSTANCE" --zone="$ZONE" --tunnel-through-iap --quiet)
+say() { printf '\n==> %s\n' "$*"; }
 # How much to prove before enabling the timer.
 #
 #   send   (default)  render on the VM AND send one --test email. Proves SMTP.
@@ -37,12 +47,76 @@ SSH=(gcloud compute ssh "$INSTANCE" --zone="$ZONE" --tunnel-through-iap --quiet)
 #                     except SMTP. Use when you do not want mail right now.
 #   none              enable it blind. Nothing is proven.
 VERIFY="${VERIFY:-send}"
-case "${1:-}" in
-    --dry-verify)  VERIFY=dry ;;
-    --skip-verify) VERIFY=none ;;
-esac
+FROM_UNIT=0
+PRINT_PLAN=0
+# Overridable so the refusal path can be exercised against a unit that is not
+# there, without inventing a second code path to test.
+UNIT="${UNIT:-ecowitt-report.service}"
+for arg in "$@"; do
+    case "$arg" in
+        --dry-verify)  VERIFY=dry ;;
+        --skip-verify) VERIFY=none ;;
+        --from-unit)   FROM_UNIT=1 ;;
+        --print-plan)  PRINT_PLAN=1 ;;
+        *) echo "unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
 
 [[ -d src/reporting ]] || { echo "ERROR: run from the repo root" >&2; exit 2; }
+
+# --- read the addresses back out of the installed unit -------------------
+# Same shape as infra/run_as_unit.sh:29-39, pointed the other way: that one runs
+# on the VM and execs with the unit's environment, this one brings the values
+# back to the laptop so the installer can put them straight back. shlex, because
+# systemd quotes any value containing spaces -- a display name in From is
+# exactly such a value, and splitting on whitespace shreds it. Round 1 of R-009
+# did exactly that and reported two present values as missing.
+if (( FROM_UNIT )); then
+    say "Reading the addresses back from $UNIT on $INSTANCE"
+    unit_env_raw="$("${SSH[@]}" --command="systemctl show $UNIT -p Environment --value" 2>/dev/null || true)"
+    # Values are eval'd straight into variables: they never reach a file, a log
+    # or this script's output. The summaries below say how many, never which.
+    assignments="$(
+        UNIT_ENV_RAW="$unit_env_raw" UNIT_NAME="$UNIT" python3 <<'PY'
+import os, shlex, sys
+
+raw = os.environ["UNIT_ENV_RAW"].strip()
+unit = os.environ["UNIT_NAME"]
+if not raw:
+    sys.exit(f"REFUSED: {unit} reported no Environment. Is the report deployed "
+             f"on this box? --from-unit is for redeploys; a first install takes "
+             f"the values from the environment.")
+
+env = dict(t.split("=", 1) for t in shlex.split(raw) if "=" in t)
+
+REQUIRED = ("LAKEHOUSE_EMAIL_TO", "LAKEHOUSE_EMAIL_TEST_TO", "LAKEHOUSE_EMAIL_FROM")
+OPTIONAL = ("LAKEHOUSE_STATION_URL", "LAKEHOUSE_REPLY_TO")
+
+missing = [k for k in REQUIRED if not env.get(k)]
+if missing:
+    sys.exit("REFUSED: the unit is missing " + ", ".join(missing) +
+             ". Not guessing a recipient.")
+
+# A value set in BOTH places that disagrees is ambiguous, and picking either
+# one silently is how a redeploy quietly changes who gets the mail.
+clashes = [
+    k for k in REQUIRED + OPTIONAL
+    if os.environ.get(k) and os.environ[k] != env.get(k, "")
+]
+if clashes:
+    sys.exit("REFUSED: " + ", ".join(clashes) + " is set in your environment "
+             "AND in the unit, and they differ. Unset it, or deploy without "
+             "--from-unit. Not choosing for you.")
+
+for k in REQUIRED + OPTIONAL:
+    if k in env:
+        print(f"{k}={shlex.quote(env[k])}")
+print(f"echo '    {len(REQUIRED)} addresses + "
+      f"{sum(1 for k in OPTIONAL if env.get(k))} optional, from the unit, unchanged'")
+PY
+    )" || exit 2   # python already printed the refusal on stderr
+    eval "$assignments"
+fi
 : "${LAKEHOUSE_EMAIL_TO:?set it — refusing to install a unit with a placeholder recipient}"
 : "${LAKEHOUSE_EMAIL_TEST_TO:?set it — the test list must never fall back to production}"
 : "${LAKEHOUSE_EMAIL_FROM:?set it — the email needs a sender}"
@@ -56,7 +130,6 @@ LAKEHOUSE_SMTP_USER="${LAKEHOUSE_SMTP_USER:-$LAKEHOUSE_EMAIL_FROM}"
 # Optional: only an identity-linked Anthropic key needs it.
 ANTHROPIC_WORKSPACE_ID="${ANTHROPIC_WORKSPACE_ID:-}"
 
-say() { printf '\n==> %s\n' "$*"; }
 
 # --- 1. preflight ---------------------------------------------------------
 say "Checking prerequisites"
@@ -125,6 +198,32 @@ if [[ "$LAKEHOUSE_EMAIL_TO" != *","* ]]; then
     echo "        one person. That is allowed, and it looks identical to reaching"
     echo "        three — which is why §5.2 refuses to guess. Add the others when"
     echo "        you have them."
+fi
+
+# --- 1b. --print-plan: everything proven, nothing installed ---------------
+# The point of this exit is that it comes AFTER the preflight and after the
+# addresses are resolved, so it exercises every refusal a real run would hit.
+# An earlier exit would prove only that the flag parses.
+if (( PRINT_PLAN )); then
+    plan_commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    git diff --quiet HEAD 2>/dev/null || plan_commit="$plan_commit-dirty"
+    cat <<PLAN
+
+==> PLAN ONLY — nothing has been installed and nothing has been sent.
+
+  instance          $INSTANCE ($ZONE), project $PROJECT_ID
+  unit read         $UNIT
+  addresses         $( (( FROM_UNIT )) && echo '<3 addresses + optional, from the unit, unchanged>' || echo '<from the environment>' )
+  commit to deploy  $plan_commit
+  verify mode       $VERIFY $( [[ "$VERIFY" == send ]] && echo '(one --test email from the VM, to the test address)' )
+  timer             enabled ONLY if that verify succeeds
+
+  Would then: stage src + notebooks, install on the VM, write
+  /opt/ecowitt/app/VERSION, substitute the unit file, and run the verify.
+
+  To do it for real, drop --print-plan.
+PLAN
+    exit 0
 fi
 
 # --- 2. install, timer still off -----------------------------------------

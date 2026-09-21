@@ -613,9 +613,12 @@ nothing after them:
 
 1. **`Report written:`** followed by a markdown link to the report file, e.g.
    `Report written: [lake-main-R-009-report.md](claude_work/reports/lake-main-R-009-report.md)`
-2. **The return cell**, in a fenced block:
+2. **The return cell**, in a fenced block, **with no slash and no
+   `anthropic-skills:` prefix** — it is pasted into Cowork, and Marc,
+   2026-09-21: *"I can't copy/paste it directly into Cowork b/c it's prefixed
+   /anthropic-skills:project-round-close."*
    ```
-   /anthropic-skills:project-round-close <full id>
+   project-round-close <full id>
    ```
 3. **The clock line**, in America/Los_Angeles.
 
@@ -627,11 +630,15 @@ it's waiting on.
 
 ### Handing a round across surfaces
 
-**One cell, both directions: `/anthropic-skills:project-round-close <abbr>-<session>-R-###`.**
-Observed working in Cowork (2026-09-17 22:19, 2026-09-21) and in Claude Code
-(2026-09-17 22:24, where it named the synced skill tree as its base directory).
-The bare `/project-round-close` also resolves in Code today, but only through a
-hand-installed personal copy that R-005 may remove — so no cell depends on it.
+**The cell depends on where it is pasted.** Observed 2026-09-21:
+
+| direction | pasted into | the cell |
+|---|---|---|
+| Cowork → Code | Claude Code | `/anthropic-skills:project-round-close <full id>` |
+| Code → Cowork | Cowork | `project-round-close <full id>` — no slash, no prefix |
+
+The slashed, prefixed form cannot be pasted into Cowork as-is. The bare form
+is what Marc has typed into Cowork on 2026-09-21 and it resolved each time.
 
 ⚠️ **Two copies of the skill exist on this Mac** — the personal install and the
 synced plugin copy, separate files that nothing keeps equal. R-005 decides which

@@ -243,6 +243,38 @@ the VM, and enables the timer only if that email actually went out. A scheduler
 enabled for something that has never run is a promise nobody has checked, and
 the first unattended run would be 07:00 on the morning it matters.
 
+### Redeploying a box that is already installed
+
+Once the unit exists, don't retype the addresses — read them back out of it:
+
+```bash
+./infra/deploy_report.sh --from-unit
+```
+
+`--from-unit` pulls `LAKEHOUSE_EMAIL_TO`, `LAKEHOUSE_EMAIL_TEST_TO`,
+`LAKEHOUSE_EMAIL_FROM`, `LAKEHOUSE_STATION_URL` and `LAKEHOUSE_REPLY_TO` from
+the installed `ecowitt-report.service` over IAP. The values never reach your
+shell history, this repo, or the script's output — it prints counts, not
+addresses. Retyping them is how an address with a comment glued to it got into
+a unit file once (02_DAILY_EMAIL_AS_BUILT §5.3).
+
+It **refuses** rather than guessing when the unit isn't installed, when a
+required address is missing (naming which), or when a value is set in both your
+environment and the unit and the two disagree. A redeploy that silently changes
+who gets the mail is the failure being designed against.
+
+Add `--print-plan` to run every one of those checks and the full preflight,
+print what it would do with the addresses redacted, and exit **without
+installing or sending anything**:
+
+```bash
+./infra/deploy_report.sh --from-unit --print-plan
+```
+
+Everything else is unchanged: `VERIFY=send` by default, the timer is enabled
+only after a successful test send, and the deployed commit is recorded in
+`/opt/ecowitt/app/VERSION`.
+
 ### What each piece needs, and why it is where it is
 
 | Value | Lives in | Why there |
