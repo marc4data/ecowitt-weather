@@ -59,7 +59,7 @@ def subject(report) -> str:
     """A sentence, not a status code.
 
         Lake house Ecowitt System checks are good for Wed, Aug 5th
-        Lake house Ecowitt System checks are good with a warning for Sat, Sep 12th
+        Lake house Ecowitt System checks are good with a WARNING for Sat, Sep 12th
             - indoor humidity 49-69 %
         Lake house Ecowitt System checks need ATTENTION for Fri, Aug 21st - 2 issues, indoor 94.8 ºF
 
@@ -68,7 +68,7 @@ def subject(report) -> str:
     it sorted well and told a person nothing.
 
     Three forms, one per severity, and they diverge EARLY -- "are good" /
-    "are good with a warning" / "need ATTENTION". A phone notification shows the
+    "are good with a WARNING" / "need ATTENTION". A phone notification shows the
     start of the line and nothing else, so a difference that only appears after
     the date is a difference nobody sees (R-010).
 
@@ -76,9 +76,13 @@ def subject(report) -> str:
 
     * **ATTENTION is capitalised and Good is not.** The shape of the word is
       what the eye catches before it reads anything.
-    * **"warning" is lower case.** Only one of the three states is meant to
-      pull someone off what they are doing; two shouting words would flatten
-      that back into a single alarm.
+    * **WARNING is capitalised too** -- Marc, 2026-09-21. This round first
+      shipped it lower case, arguing that two shouting words flatten three
+      states back into one alarm. Marc reads these on a phone and wanted the
+      middle state to carry the same weight as the loud one, so it is his
+      call and the earlier argument is recorded here only so nobody re-opens
+      it as if it had never been made. The states still differ by their verb
+      -- "are good with" against "need" -- not by case alone.
     * **REPLAY still leads.** A truncated subject on a phone keeps its
       beginning, so anything that must not be mistaken for today goes first.
 
@@ -94,7 +98,7 @@ def subject(report) -> str:
         # No issue count: a warning day is a single thing worth a glance, and
         # "1 issue" reads like a fault report.
         head = (
-            f"Lake house Ecowitt System checks are good with a warning "
+            f"Lake house Ecowitt System checks are good with a WARNING "
             f"for {date_part} - {_short_title(report)}"
         )
     else:

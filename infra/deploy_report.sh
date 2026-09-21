@@ -129,6 +129,15 @@ fi
 
 # --- 2. install, timer still off -----------------------------------------
 say "Staging application"
+# What is actually going onto the box. R-009 round 1 found the install recorded
+# no commit at all, so "what is the VM running" could only be answered by
+# grepping its source for a string you already expected to find. A dirty tree
+# is marked as such rather than quietly reported as its last commit.
+DEPLOY_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+if ! git diff --quiet HEAD 2>/dev/null; then
+    DEPLOY_COMMIT="$DEPLOY_COMMIT-dirty"
+fi
+echo "    commit: $DEPLOY_COMMIT"
 # notebooks/*.py goes too: it owns the check thresholds this report reads, and
 # copying them into src/ would be the two-implementations failure this project
 # keeps designing against.
@@ -146,6 +155,9 @@ sudo install -m 755 -o ecowitt -g ecowitt /tmp/run_report.sh /opt/ecowitt/app/
 # Replaces the ingestion heartbeat with the one that also watches email_log.
 sudo install -m 755 -o ecowitt -g ecowitt /tmp/heartbeat.sh /opt/ecowitt/
 sudo chown -R ecowitt:ecowitt /opt/ecowitt/app
+# Recorded BEFORE the slow venv build, so a deploy that dies building pandas
+# still leaves behind the truth about which source tree is on disk.
+printf '%s\n' '${DEPLOY_COMMIT}' | sudo -u ecowitt tee /opt/ecowitt/app/VERSION >/dev/null
 
 # The report needs pandas, matplotlib and sqlalchemy, which the ingestion job
 # does not. This is the slow step on a 1 GB e2-micro -- several minutes, and it
@@ -172,7 +184,7 @@ fi
 sudo install -m 644 /tmp/ecowitt-report.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 rm -f /tmp/ecowitt-report.tgz
-echo 'installed; timer not enabled yet'
+echo 'installed as ${DEPLOY_COMMIT}; timer not enabled yet'
 "
 
 # --- 3. prove it works ----------------------------------------------------

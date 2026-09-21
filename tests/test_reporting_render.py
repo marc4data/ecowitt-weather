@@ -70,11 +70,12 @@ def test_a_warning_day_reads_as_good_with_a_warning_not_as_attention(fixture_db)
     start, end = day_bounds("2026-09-12")
     out = rendered(fixture_db, "2026-09-12", warn_day(start, end))
 
-    assert "are good with a warning for Sat, Sep 12th" in out.subject
+    assert "are good with a WARNING for Sat, Sep 12th" in out.subject
     assert "ATTENTION" not in out.subject, "a warning is not a failure"
-    # Lower case on purpose: two shouting words would flatten three states
-    # back into one alarm.
-    assert "WARNING" not in out.subject
+    # Capitalised on Marc's call, 2026-09-21. What separates the two loud
+    # states is the verb -- "are good with" against "need" -- so that is what
+    # is pinned, rather than the case of one word.
+    assert "need ATTENTION" not in out.subject
     # It still says WHAT, the way the attention form does.
     assert "indoor humidity" in out.subject
     # And no issue count -- "1 issue" reads like a fault report.
