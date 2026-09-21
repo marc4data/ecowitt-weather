@@ -599,38 +599,32 @@ asks. A request gets its number when Marc makes it, not when a round starts.
 4. **A warning that is usually nothing is worse than no warning.** This is why
    `no flatlined sensor` was removed (02_DAILY_EMAIL_AS_BUILT.md §2.4). Any
    round that adds or loosens a check argues against that standard explicitly.
-### Handing a round across surfaces
-
-**Observed 2026-09-17 22:14 in Claude Code: `/project-round-close` resolves.**
-The session names its base directory as Marc's personal install,
-`~/.claude/skills/project-round-close/` (20,562 bytes, sha256 begins
-`b0fa922909ab2052`). The earlier reading — that neither spelling resolved in
-Code — was true when it was taken, at roughly 16:00, before that file existed
-at 16:04. R-004's criterion is met.
-
-| direction | the cell |
-|---|---|
-| Cowork → Code | `/project-round-close <abbr>-<session>-R-###` — seen working in Code 2026-09-17 |
-| Code → Cowork | `Review round <id> — report at claude_work/reports/<id>-report.md` — plain English; Cowork invokes the skill itself |
-
-**The Code → Cowork cell stays prose deliberately.** The skill resolves in
-Cowork, but the *slash spelling* has not been seen working there, and that is a
-different observation. Do not put a slash command in a cell until it has been
-seen working on that surface, and then record it here rather than inferring it
-from how the other surface addresses the skill.
-
-⚠️ **Two independent copies now resolve, and nothing keeps them in step.**
-`/project-round-close` reads the personal install above.
-`/anthropic-skills:project-round-close` reads a synced, plugin-backed copy
-registered on Marc's account at 16:05 — one minute after the personal file was
-written, though nothing observed here proves that one produced the other.
-✅ **Both spellings are now observed working in Code**: the namespaced one ran
-R-001's second sitting at 22:24 and named the synced tree as its base directory,
-which upgrades the copy-to-spelling mapping above from inference to observation.
-Measured: separate inodes, link count 1 each, neither a symlink, `cmp` clean.
-They are identical today by shared origin, not by mechanism. Edit one and the
-other keeps the old text, and which one a session gets depends on which name was
-typed. Keep one copy, not two — which one is Marc's call (R-004).
-
 5. **A staged break that comes back green is the finding.** Every round proves
    its guard can fail and names the test that went red.
+
+### Handing a round across surfaces
+
+**One cell, both directions: `/anthropic-skills:project-round-close <abbr>-<session>-R-###`.**
+Observed working in Cowork (2026-09-17 22:19, 2026-09-21) and in Claude Code
+(2026-09-17 22:24, where it named the synced skill tree as its base directory).
+The bare `/project-round-close` also resolves in Code today, but only through a
+hand-installed personal copy that R-005 may remove — so no cell depends on it.
+
+⚠️ **Two copies of the skill exist on this Mac** — the personal install and the
+synced plugin copy, separate files that nothing keeps equal. R-005 decides which
+survives. Until then, edit the skill in Cowork, never on disk.
+
+### What a Code session may do with git
+
+**Commit locally, freely. Push and deploy only after Cowork has reviewed the
+round.** A verified round left uncommitted for a day is a checkout away from
+being lost; a pushed or deployed one that Cowork has not read is how an
+unreviewed change reaches three inboxes at 07:00.
+
+### Clock lines are America/Los_Angeles
+
+`TZ=America/Los_Angeles date +"%Y-%m-%d %-I:%M:%S %p"` — always the explicit zone.
+R-001's first sitting stamped its clock in Central (the station's display zone)
+and came out two hours off. The station's zone is for the email; the clock is
+Marc's.
+
