@@ -621,6 +621,13 @@ round.** A verified round left uncommitted for a day is a checkout away from
 being lost; a pushed or deployed one that Cowork has not read is how an
 unreviewed change reaches three inboxes at 07:00.
 
+**Cowork never writes to git over the device bridge.** The bridge cannot unlink
+files, so every git write leaves its lock behind — `index.lock` on 2026-09-17,
+`HEAD.lock` and `objects/maintenance.lock` on 2026-09-21 — and the next Code
+session's commit fails on it. Cowork leaves its edits in the working tree; the
+next Code round commits them. Read-only git from the bridge runs with
+`GIT_OPTIONAL_LOCKS=0`.
+
 ### Clock lines are America/Los_Angeles
 
 `TZ=America/Los_Angeles date +"%Y-%m-%d %-I:%M:%S %p"` — always the explicit zone.
