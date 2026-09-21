@@ -1,70 +1,68 @@
-# lake-main-R-009 — round 2: WARNING in capitals, then ship
+# lake-main-R-009 — round 3: let Marc deploy with one command
 
-**Session:** `main` · **Register:** R-009, R-010, R-012
+**Session:** `main` · **Register:** R-009
 
-## 🚨 Read this first — how your reply ends, even if you stop
+## 🚨 Read this first — how your reply ends, whatever happens
 
-End your reply with these three things, in this order, whatever happens: shipped,
-stopped, refused or failed (CLAUDE.md §14, R-012). Round 1 skipped them.
+End your reply with these three things, in this order (CLAUDE.md §14, R-012):
 
 1. `Report written: [lake-main-R-009-report.md](claude_work/reports/lake-main-R-009-report.md)`
 2. ```
-   /anthropic-skills:project-round-close lake-main-R-009
+   project-round-close lake-main-R-009
    ```
 3. `**Start YYYY-MM-DD H:MM AM/PM / End H:MM AM/PM : MM:SS**` — `TZ=America/Los_Angeles`
 
-## Step 0 — commit Cowork's edits, then one word
+## Step 0
 
-Commit the register, CLAUDE.md and this prompt (CLAUDE.md §14).
+Commit Cowork's edits: the register and this prompt.
 
-Marc approved both household texts, with one change: *"WARN should be in
-CAPS."* The warning subject becomes:
+## Why this round exists
 
-`Lake house Ecowitt System checks are good with a WARNING for Sat, Sep 12th - indoor humidity 49–69 %`
+The classifier refused the deploy twice without asking Marc. Cowork's call:
+**Marc runs the deploy himself** in his own terminal — his server, his gate.
+No settings rule granting Code standing deploy rights.
 
-Change `render.py:97` and the docstring at `:62`/`:71`, and update
-`test_reporting_render.py:73`. Stage the break (lower-case it again), name the
-red test, restore. `pytest` green. Commit locally.
+He shouldn't have to type five values to do it, since retyping is how a bad
+address reached the unit once (02_DAILY_EMAIL_AS_BUILT §5.3). So:
 
-## Step 1 — the deploy, which needs Marc's permission
+## The change — `deploy_report.sh --from-unit`
 
-Round 1 was refused by Claude Code's auto-mode classifier (`[Production
-Deploy]`). That's correct behaviour: the gate belongs to Marc. **Don't route
-around it.** When you reach `./infra/deploy_report.sh`, let the permission
-prompt reach Marc; he approves it in this window. If it's refused again without
-a prompt reaching him, stop and end your reply as above.
+- New flag. When given, read `LAKEHOUSE_EMAIL_TO`, `LAKEHOUSE_EMAIL_TEST_TO`,
+  `LAKEHOUSE_EMAIL_FROM`, `LAKEHOUSE_STATION_URL` and `LAKEHOUSE_REPLY_TO` back
+  from the installed `ecowitt-report.service` over IAP. Use the same
+  `systemctl show … -p Environment --value` plus `shlex.split` pattern that
+  `infra/run_as_unit.sh:29-39` already uses — reuse it, don't reinvent it.
+- **Refuse** if the unit isn't installed or any of the three required values is
+  missing, naming which one. `--from-unit` is for redeploys; a first install
+  still takes them from the environment.
+- If a value is **also** set in the environment and differs from the unit,
+  refuse and say which one differs. Don't pick one silently.
+- The values never appear in output, logs, the report or a commit. Print
+  `<3 addresses, from the unit>` style summaries only.
+- Everything after that is unchanged: `VERIFY=send`, timer guard, the VERSION
+  file.
+- Update the usage comment at the top and `infra/README.md` with the redeploy
+  command.
 
-Use round 1's verified approach unchanged:
+## Prove it without deploying
 
-- Read the five env values back from `ecowitt-report.service` with `shlex.split`
-  — not a split on spaces, which round 1 caught shredding the display name.
-  Values never appear in any file, report or commit.
-- `VERIFY=send`, never `--skip-verify`. One `--test` email goes to Marc only.
-- The timer is **already on**. If the test send fails, the new code is installed
-  but the old timer still runs — say so plainly and stop; don't try to roll back.
+**Don't run the deploy.** Prove the new flag up to the point of installing:
 
-## Step 2 — prove it on the VM
-
-1. `ROLLING_NOT_ACCUMULATING` is in the installed `ecowitt_daily.py`.
-2. Dry replay of 12 Sep through `infra/run_as_unit.sh --for-date 2026-09-12`
-   (no `--test`, no `--send`). State the subject (expected: `are good with a
-   WARNING … indoor humidity`), the rain check line (expected `[ok  ] … none`),
-   and the rain title (expected `… most in the last day: 0.09 in`).
-3. `systemctl list-timers 'ecowitt-*'` — the report timer still has its next run
-   at 07:0x Central.
-4. **Write the deployed commit hash to `/opt/ecowitt/app/VERSION`** during the
-   install, so the next round can tell what's running without guessing. Round 1
-   found no record. If that means changing `deploy_report.sh`, make the change,
-   commit it, and note that the change itself shipped in this deploy.
-
-## Step 3 — push
-
-Only after steps 1–2 pass: push `daily-email` to origin. Don't merge to `master`.
+- Add a `--from-unit --print-plan` path (or equivalent) that reads the unit,
+  runs every refusal check, prints what it *would* do with the values redacted,
+  and exits 0 without installing. Run it against the real VM (a read over IAP
+  worked in round 1).
+- 🚨 **Staged break:** point it at a unit name that doesn't exist and show it
+  refuses with a clear message. Name what went red — a shell script may not
+  have a pytest; if so, the staged break is the refusal output itself, quoted.
+- `bash -n` is not evidence — round 2 found it passing on a broken quote.
+  Render the IAP command with a dummy value and read it.
 
 ## Report
 
-Add a **Round 2** section to `claude_work/reports/lake-main-R-009-report.md`.
-Keep round 1 as it is. Include the test email's send time or Message-ID — that
-email is how Marc first sees all of this.
+Round 3 section in `claude_work/reports/lake-main-R-009-report.md`. Give the
+**exact command Marc will run**, in a fenced block, runnable from the repo root.
+
+**Commit locally. Don't push.** Pushing waits for the deploy's proofs (round 4).
 
 ## Then end your reply exactly as the top of this prompt says.
