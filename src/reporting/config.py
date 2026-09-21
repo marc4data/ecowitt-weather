@@ -284,9 +284,9 @@ GENERIC_ACTIONS = {
         "usually means a failing sensor or a changed unit rather than weather."
     ),
     "rain accumulators only reset to zero": (
-        "A rain total went backwards without resetting to zero, which a running "
-        "total should not do. The day's rainfall figures may be understated; "
-        "nothing else in the report is affected."
+        "The rain gauge's own running totals went backwards without resetting "
+        "to zero. That points at the gauge or its console, not the weather, and "
+        "nothing at the house is affected."
     ),
     "battery levels": (
         "A cell is near its floor. Replacing it is not urgent, but the sensor "

@@ -52,6 +52,73 @@ def test_action_subject_names_the_condition_not_the_severity(fixture_db):
     assert "indoor within protection band" not in out.subject
 
 
+def warn_day(start, end):
+    """A day whose only complaint is a WARNING, with nothing failing.
+
+    `indoor humidity in band` is the one check that can only ever WARN -- it is
+    a comfort bound, and a check that cries failure over humidity trains people
+    to ignore it. 64 % is above the 60 % band but below the 65 % the protection
+    band starts caring about, so the day warns once and fails nothing.
+    """
+    frame = build_day(start, end)
+    frame["indoor.humidity"] = 64.0
+    return frame
+
+
+def test_a_warning_day_reads_as_good_with_a_warning_not_as_attention(fixture_db):
+    """R-010. Three states, three sentences -- and ATTENTION is not one of them here."""
+    start, end = day_bounds("2026-09-12")
+    out = rendered(fixture_db, "2026-09-12", warn_day(start, end))
+
+    assert "are good with a warning for Sat, Sep 12th" in out.subject
+    assert "ATTENTION" not in out.subject, "a warning is not a failure"
+    # Lower case on purpose: two shouting words would flatten three states
+    # back into one alarm.
+    assert "WARNING" not in out.subject
+    # It still says WHAT, the way the attention form does.
+    assert "indoor humidity" in out.subject
+    # And no issue count -- "1 issue" reads like a fault report.
+    assert "issue" not in out.subject
+
+
+def test_the_three_subject_forms_differ_before_the_date(fixture_db):
+    """A phone notification shows the START of the line and nothing else.
+
+    A difference that only appears after the date is a difference nobody sees,
+    so this pins that the three forms diverge while they are still on screen.
+    """
+    # 🚨 ONE date for all three. Staged against three different dates this test
+    # came back GREEN with the warning form collapsed into ATTENTION, because
+    # the subjects still differed -- by date. Severity has to be the only thing
+    # that varies, or the test is measuring the calendar.
+    start, end = day_bounds("2026-09-12")
+
+    subjects = {
+        "ok": rendered(fixture_db, "2026-09-12", build_day(start, end)).subject,
+        "warn": rendered(fixture_db, "2026-09-12", warn_day(start, end)).subject,
+        "alert": rendered(
+            fixture_db, "2026-09-12",
+            build_day(start, end, indoor=95.0, indoor_room=93.0),
+        ).subject,
+    }
+    assert len(set(subjects.values())) == 3
+
+    # Compare the three at the point a notification truncates them. The prefix
+    # is shared ("REPLAY — Lake house Ecowitt System checks "), so the first
+    # difference has to arrive within a notification's worth of characters.
+    heads = {k: v[:75] for k, v in subjects.items()}
+    assert len(set(heads.values())) == 3, f"indistinguishable when truncated: {heads}"
+
+
+def test_the_attention_form_is_pinned(fixture_db):
+    """The loud form is the one that must not drift by accident."""
+    start, end = day_bounds("2026-08-16")
+    out = rendered(fixture_db, "2026-08-16", build_day(start, end, indoor=95.0, indoor_room=93.0))
+    assert out.subject.startswith(
+        "REPLAY — Lake house Ecowitt System checks need ATTENTION for Sun, Aug 16th - 1 issue, "
+    )
+
+
 def test_text_alternative_stands_alone_with_every_image_blocked(fixture_db):
     """§6.4. Verdict, numbers, action and banner, with no picture at all."""
     start, end = day_bounds("2026-08-16")
@@ -334,11 +401,18 @@ def test_rain_chart_plots_a_trailing_24_hour_total():
     assert spread.iloc[23] == pytest.approx(0.24)
 
 
-def test_rain_headline_total_is_the_hourly_sum_not_the_rolling_sum():
-    """🚨 The guard. Summing 168 rolling values counts every hour ~24 times."""
-    hours = [0.02] * 12 + [0.0] * 156  # a week, 0.24 in of it rain
+def test_rain_headline_is_the_last_days_biggest_window_not_the_week():
+    """R-010. The title's number is the biggest 24 h ending in the LAST day.
+
+    The same fixture pins both numbers precisely because they disagree: 0.24 in
+    fell during the week, all of it six days ago, so the headline is 0.00 and
+    the week total is 0.24. A title showing 0.24 here would tell three people it
+    rained yesterday when it did not.
+    """
+    hours = [0.02] * 12 + [0.0] * 156  # a week, 0.24 in of it rain, all early
     summary = charts.rain_summary(rain_week(hours))
 
+    assert summary["last_day_max"] == pytest.approx(0.0), "no rain ended in the last day"
     assert summary["total"] == pytest.approx(0.24), "the week total is the hourly sum"
     # What the wrong answer would look like, stated so the test says WHY it is
     # wrong rather than just asserting a number.
@@ -347,6 +421,24 @@ def test_rain_headline_total_is_the_hourly_sum_not_the_rolling_sum():
         "the fixture has to be able to tell the two apart -- if the rolling sum "
         "were close to the hourly one this test would pass on a broken chart"
     )
+
+
+def test_a_storm_crossing_midnight_counts_at_full_size_in_the_headline():
+    """The reason the headline reads a ROLLING window rather than a calendar day.
+
+    0.24 in falls over eight hours, four before the last day starts and four
+    after. A calendar-day total would report 0.12 and split the storm; the
+    trailing window that ends inside the last day sees all of it.
+    """
+    hours = [0.0] * 140 + [0.03] * 8 + [0.0] * 20
+    summary = charts.rain_summary(rain_week(hours))
+
+    assert summary["last_day_max"] == pytest.approx(0.24), (
+        "the window ending inside the last day has to reach back over midnight"
+    )
+    # State the wrong answer, so the test says why it is wrong.
+    fell_on_the_last_day = sum(hours[144:])
+    assert fell_on_the_last_day == pytest.approx(0.12)
 
 
 def test_rain_leading_edge_is_blank_rather_than_short():

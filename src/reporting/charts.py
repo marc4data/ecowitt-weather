@@ -465,12 +465,29 @@ def rain_summary(report) -> dict | None:
         return None
     window = _rain_24h(hourly)
     drawn = window.dropna()
+
+    # The headline number (R-010): the largest trailing-24-hour total among the
+    # windows that END in the final day of the chart. A storm that begins at
+    # 8 p.m. and stops at 4 a.m. is therefore counted at its full size on the
+    # morning it ended, rather than being split by midnight -- which is the
+    # whole reason the series is a rolling window in the first place.
+    #
+    # It is NOT the same as `peak`, which is the largest window anywhere in the
+    # seven days, and NOT the same as `total`, which is the week's rainfall.
+    # Three different questions; the title asks only the first.
+    last_day = (
+        drawn[drawn.index > drawn.index[-1] - pd.Timedelta(hours=24)]
+        if not drawn.empty
+        else drawn
+    )
+
     return {
         "hourly": hourly,
         "window": window,
         "total": float(hourly.sum(skipna=True)),
         "peak": float(drawn.max()) if not drawn.empty else 0.0,
         "peak_at": drawn.idxmax() if not drawn.empty else None,
+        "last_day_max": float(last_day.max()) if not last_day.empty else 0.0,
     }
 
 
@@ -525,7 +542,9 @@ def rain(report) -> bytes:
 
     Every number on it comes from `rain_summary`, which is where the rule about
     the week total being the HOURLY sum rather than the rolling one is written
-    down and where a test can reach it.
+    down and where a test can reach it. The week total no longer appears in the
+    title (R-010) but still decides whether the dry-week annotation is drawn,
+    so that rule is still live.
 
     Seven days rather than one: most weeks here are dry, and a flat line at zero
     for 24 hours tells nobody anything. A week shows when it last actually
@@ -537,6 +556,7 @@ def rain(report) -> bytes:
         return _empty("Rain in any 24 hours — last 7 days")
     hourly, window = summary["hourly"], summary["window"]
     week_total, peak = summary["total"], summary["peak"]
+    last_day_max = summary["last_day_max"]
     drawable = window.notna()
 
     fig, ax = plt.subplots(figsize=FIGSIZE, layout="constrained")
@@ -557,8 +577,16 @@ def rain(report) -> bytes:
     ax.set_xlim(hourly.index.min(), hourly.index.max())
 
     ax.set_ylabel("in")
+    # The week total used to sit here. Marc asked for the last day's figure
+    # instead (R-010): on a phone this is one line, and "how much came down
+    # yesterday" is the question being asked of it.
+    headline = (
+        f"most in the last day: {last_day_max:.2f} in"
+        if last_day_max > 0.001
+        else "none in the last day"
+    )
     ax.set_title(
-        f"Rain in any 24 hours — last 7 days  ·  {week_total:.2f} in in total",
+        f"Rain in any 24 hours — last 7 days  ·  {headline}",
         loc="left",
         fontsize=11,
         color=nb.INK,

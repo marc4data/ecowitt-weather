@@ -59,23 +59,44 @@ def subject(report) -> str:
     """A sentence, not a status code.
 
         Lake house Ecowitt System checks are good for Wed, Aug 5th
+        Lake house Ecowitt System checks are good with a warning for Sat, Sep 12th
+            - indoor humidity 49-69 %
         Lake house Ecowitt System checks need ATTENTION for Fri, Aug 21st - 2 issues, indoor 94.8 ºF
 
     Written to be read by three people on a phone notification, only one of whom
     cares what a "check" is. `[lakehouse] ACTION -` was a machine's subject line:
     it sorted well and told a person nothing.
 
-    Two things survive from that machine version because they are load-bearing:
+    Three forms, one per severity, and they diverge EARLY -- "are good" /
+    "are good with a warning" / "need ATTENTION". A phone notification shows the
+    start of the line and nothing else, so a difference that only appears after
+    the date is a difference nobody sees (R-010).
+
+    Three things are load-bearing:
 
     * **ATTENTION is capitalised and Good is not.** The shape of the word is
       what the eye catches before it reads anything.
+    * **"warning" is lower case.** Only one of the three states is meant to
+      pull someone off what they are doing; two shouting words would flatten
+      that back into a single alarm.
     * **REPLAY still leads.** A truncated subject on a phone keeps its
       beginning, so anything that must not be mistaken for today goes first.
+
+    A `warn` day carries no FAIL by construction -- `report._severity` reads
+    `"alert" if fails else ("warn" if warns else "ok")` -- so the warning form
+    can never be hiding a failure.
     """
     date_part = friendly_date(report.for_date)
 
     if report.severity == "ok" and report.has_data:
         head = f"Lake house Ecowitt System checks are good for {date_part}"
+    elif report.severity == "warn" and report.has_data:
+        # No issue count: a warning day is a single thing worth a glance, and
+        # "1 issue" reads like a fault report.
+        head = (
+            f"Lake house Ecowitt System checks are good with a warning "
+            f"for {date_part} - {_short_title(report)}"
+        )
     else:
         head = f"Lake house Ecowitt System checks need ATTENTION for {date_part}"
         count = len([i for i in report.attention.get("items", []) if i.get("verdict") == "FAIL"])
@@ -123,7 +144,7 @@ def _short_title(report) -> str:
         "rows quarantined": f"{measured} rows quarantined",
         "values corrected after the fact": f"{measured} values corrected",
         "values physically possible": f"impossible readings ({measured})",
-        "rain accumulators only reset to zero": "rain totals went backwards",
+        "rain accumulators only reset to zero": "rain gauge totals went backwards",
     }.get(leading["check"], f"{leading['check']} — {measured}")
     return plain[:70]
 
