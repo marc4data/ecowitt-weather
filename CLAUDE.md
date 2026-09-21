@@ -8,13 +8,13 @@ Persistent context for Claude Code working in this repository.
 > unresolved — **do not invent answers for them.** If a task depends on an
 > unresolved item, stop and ask.
 >
-> **Daily email: built 2026-08-28, ready to deploy, NOT YET RUNNING.** `src/reporting/` +
-> `infra/ecowitt-report.*` + `dags/lakehouse_*_dag.py`, specified in
-> [01_DAILY_EMAIL_REQUIREMENTS.md](01_DAILY_EMAIL_REQUIREMENTS.md). It sends
-> nothing until `schema/03_email_log.sql` is applied and the address lists are
-> set; `infra/deploy_report.sh` installs it. Detection thresholds live in
-> `notebooks/ecowitt_daily.py`, not in `reporting/` — one copy, so the notebook
-> and the email cannot disagree.
+> **Daily email: RUNNING since 2026-08-29.** `ecowitt-report.timer` on
+> `ecowitt-db` sends at 07:00 Central to three people. **The VM runs code from
+> before R-001** (checked 2026-09-21: the install records no commit). Every
+> change to `src/reporting/` or `notebooks/ecowitt_*.py` is an update to a live
+> system, shipped only by `infra/deploy_report.sh` after Cowork review.
+> Detection thresholds live in `notebooks/ecowitt_daily.py`, not in
+> `reporting/` — one copy, so the notebook and the email cannot disagree.
 
 ---
 
@@ -601,6 +601,29 @@ asks. A request gets its number when Marc makes it, not when a round starts.
    round that adds or loosens a check argues against that standard explicitly.
 5. **A staged break that comes back green is the finding.** Every round proves
    its guard can fail and names the test that went red.
+
+### 🚨 How EVERY Code reply ends — no exceptions
+
+Marc, 2026-09-21: *"There should be confirmation the report was written
+(hyperlink to the file). With the code snippet to pass to Cowork, and the
+timestamp. EVERY SINGLE TIME."*
+
+The last three things in every Code reply that runs a round, in this order,
+nothing after them:
+
+1. **`Report written:`** followed by a markdown link to the report file, e.g.
+   `Report written: [lake-main-R-009-report.md](claude_work/reports/lake-main-R-009-report.md)`
+2. **The return cell**, in a fenced block:
+   ```
+   /anthropic-skills:project-round-close <full id>
+   ```
+3. **The clock line**, in America/Los_Angeles.
+
+**This applies most of all when the round STOPPED** — blocked by a
+permission, halted by a stop condition, or failed. A stopped round is a
+finished round with a different outcome, and it gets the same ending. The only
+reply without it is one where the round is still running and can name the job
+it's waiting on.
 
 ### Handing a round across surfaces
 
