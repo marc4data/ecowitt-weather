@@ -90,7 +90,13 @@ if not raw:
 env = dict(t.split("=", 1) for t in shlex.split(raw) if "=" in t)
 
 REQUIRED = ("LAKEHOUSE_EMAIL_TO", "LAKEHOUSE_EMAIL_TEST_TO", "LAKEHOUSE_EMAIL_FROM")
-OPTIONAL = ("LAKEHOUSE_STATION_URL", "LAKEHOUSE_REPLY_TO")
+# Every remaining CHANGEME- in the unit template. Audited rather than listed
+# from memory: a value the installer substitutes but --from-unit does not read
+# back is silently blanked on redeploy. LAKEHOUSE_SMTP_USER is how that first
+# bit -- it defaulted to the display-name From and the send refused.
+# ANTHROPIC_WORKSPACE_ID was the same bug, one redeploy away from firing.
+OPTIONAL = ("LAKEHOUSE_STATION_URL", "LAKEHOUSE_REPLY_TO",
+            "LAKEHOUSE_SMTP_USER", "ANTHROPIC_WORKSPACE_ID")
 
 missing = [k for k in REQUIRED if not env.get(k)]
 if missing:
@@ -108,11 +114,26 @@ if clashes:
              "AND in the unit, and they differ. Unset it, or deploy without "
              "--from-unit. Not choosing for you.")
 
+# A display name in From is legal mail and illegal SMTP auth. The send refuses
+# on it, so refusing BEFORE the install is the difference between a failed
+# command and a broken unit sitting on a live box until someone notices.
+sender = env.get("LAKEHOUSE_EMAIL_FROM", "")
+smtp_user = os.environ.get("LAKEHOUSE_SMTP_USER") or env.get("LAKEHOUSE_SMTP_USER", "")
+if ("<" in sender or " " in sender) and ("<" in smtp_user or " " in smtp_user or not smtp_user):
+    sys.exit("REFUSED: LAKEHOUSE_EMAIL_FROM carries a display name, and no bare "
+             "address is available for LAKEHOUSE_SMTP_USER (the unit has none, "
+             "and none is set here). SMTP auth needs the address alone. Set "
+             "LAKEHOUSE_SMTP_USER='someone@example.com' and re-run. Refusing "
+             "before installing: the send would fail afterwards and leave this "
+             "box holding a unit that cannot mail.")
+
 for k in REQUIRED + OPTIONAL:
     if k in env:
         print(f"{k}={shlex.quote(env[k])}")
 print(f"echo '    {len(REQUIRED)} addresses + "
       f"{sum(1 for k in OPTIONAL if env.get(k))} optional, from the unit, unchanged'")
+print("echo '    SMTP user: " + ("bare address" if smtp_user and "<" not in smtp_user
+      and " " not in smtp_user else "none") + "'")
 PY
     )" || exit 2   # python already printed the refusal on stderr
     eval "$assignments"
@@ -287,17 +308,36 @@ echo 'installed as ${DEPLOY_COMMIT}; timer not enabled yet'
 "
 
 # --- 3. prove it works ----------------------------------------------------
-# The addresses are passed explicitly: a manual run does not inherit the unit
-# file's Environment= lines, only a systemd-started one does.
+# 🚨 The verify runs with the INSTALLED UNIT'S OWN ENVIRONMENT, not a list
+# assembled here.
+#
+# It used to pass four hand-picked variables. That list had drifted from the
+# unit -- it carried neither LAKEHOUSE_SMTP_USER nor LAKEHOUSE_REPLY_TO -- so
+# the verify could not send whatever the operator set, and, worse, it was not
+# testing the thing that runs at 07:00. A verify exercising a different
+# environment from the timer proves nothing about the timer. The hand-picked
+# list is the defect; the missing name was only its first symptom.
+#
+# Same shape as infra/run_as_unit.sh: a manual run does not inherit
+# Environment= lines, so read them on the box and exec with them.
+read -r -d '' VERIFY_REMOTE <<'VERIFYPY' || true
+import os, shlex, subprocess, sys
+raw = subprocess.run(
+    ["systemctl", "show", "ecowitt-report.service", "-p", "Environment", "--value"],
+    capture_output=True, text=True, check=True).stdout.strip()
+env = dict(t.split("=", 1) for t in shlex.split(raw) if "=" in t)
+if not env.get("LAKEHOUSE_EMAIL_TO"):
+    sys.exit("the freshly installed unit has no LAKEHOUSE_EMAIL_TO -- the "
+             "substitution above did not take")
+os.execve("/opt/ecowitt/app/run_report.sh",
+          ["run_report.sh", *sys.argv[1:]],
+          {**os.environ, **env, "ECOWITT_NOTEBOOK_DIR": "/opt/ecowitt/app/notebooks"})
+VERIFYPY
+
 run_on_vm() {
     "${SSH[@]}" --command="
-        sudo -u ecowitt \
-          LAKEHOUSE_EMAIL_TO='${LAKEHOUSE_EMAIL_TO}' \
-          LAKEHOUSE_EMAIL_TEST_TO='${LAKEHOUSE_EMAIL_TEST_TO}' \
-          LAKEHOUSE_EMAIL_FROM='${LAKEHOUSE_EMAIL_FROM}' \
-          LAKEHOUSE_STATION_URL='${LAKEHOUSE_STATION_URL}' \
-          ECOWITT_NOTEBOOK_DIR=/opt/ecowitt/app/notebooks \
-          /opt/ecowitt/app/run_report.sh $1"
+        printf '%s' $(printf '%q' "$VERIFY_REMOTE") > /tmp/ecowitt_verify.py
+        sudo -u ecowitt python3 /tmp/ecowitt_verify.py $1"
 }
 
 case "$VERIFY" in
@@ -307,13 +347,34 @@ send)
         say "That email arrived. Enabling the timer."
         "${SSH[@]}" --command="sudo systemctl enable --now ecowitt-report.timer"
     else
+        # The old text here said "the timer is OFF", which this script has no
+        # standing to claim: it only ever ENABLES a timer, it never disables
+        # one. On a redeploy of a working box the timer is already on and stays
+        # on, so the reassuring sentence was exactly backwards -- the new code
+        # is installed and the old schedule is still live. Read the real state
+        # instead of asserting one.
+        timer_state="$("${SSH[@]}" --command='systemctl is-enabled ecowitt-report.timer' 2>/dev/null | tr -d '\r' || echo unknown)"
+        cat >&2 <<EOF
+
+DID NOT ENABLE THE TIMER: the test send failed.
+
+  new code        INSTALLED on the VM (${DEPLOY_COMMIT})
+  timer           ${timer_state}
+
+EOF
+        if [[ "$timer_state" == "enabled" ]]; then
+            cat >&2 <<'EOF'
+⚠️  THE TIMER WAS ALREADY ENABLED and this script has not touched it. The
+    newly installed code is what will run at 07:00, and its test send just
+    failed. Fix it and re-run, or the morning email fails silently.
+EOF
+        else
+            cat >&2 <<'EOF'
+That is the right state: a scheduler for something that has never worked
+would first run unattended at 07:00.
+EOF
+        fi
         cat >&2 <<'EOF'
-
-REFUSED TO ENABLE THE TIMER: the test send failed.
-
-Everything is installed and the timer is OFF, which is the right state: a
-scheduler for something that has never worked would first run unattended at
-07:00. Read the error above, fix it, and re-run this script.
 
   most likely      a wrong Gmail app password, or a sender that does not match
   see the reason   the run prints diagnose() output naming the fix
