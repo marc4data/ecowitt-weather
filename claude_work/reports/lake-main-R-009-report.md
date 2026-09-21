@@ -150,3 +150,109 @@ header.
 ---
 
 **Start 2026-09-21 8:38 AM / End 8:42 AM : 03:39**
+
+---
+
+# Round 2 — WARNING in capitals shipped to the repo; the deploy refused again
+
+**Start 2026-09-21 8:49 AM.** Round 1's text above is unchanged.
+
+## R2.1 🛑 Still not shipped — same gate, second refusal
+
+```
+Permission for this action was denied by the Claude Code auto mode classifier.
+Reason: [Production Deploy]
+```
+
+The prompt said: *"let the permission prompt reach Marc; he approves it in this
+window. If it's refused again without a prompt reaching him, stop."* **No
+approval prompt surfaced** — the denial is automatic and comes from the
+classifier, and its own text names the remedy as a settings rule rather than an
+in-conversation approval. So: stopped, exactly as instructed. Nothing was routed
+around.
+
+**What I observed, precisely:** the tool call returned the classifier's refusal.
+I cannot see whether anything was displayed to Marc; I only know no approval
+came back. Stating that rather than asserting he was never asked.
+
+**The VM is untouched**, re-checked after the refusal:
+`ROLLING_NOT_ACCUMULATING` count `0`, and `no VERSION file`.
+
+## R2.2 Step 0 done — WARNING is in capitals
+
+Marc: *"WARN should be in CAPS."*
+
+`Lake house Ecowitt System checks are good with a WARNING for Sat, Sep 12th - indoor humidity 49–69 %`
+
+Changed at [render.py:97](src/reporting/render.py#L97) and in the docstring at
+[:62](src/reporting/render.py#L62) and [:71](src/reporting/render.py#L71).
+
+**The docstring argued the opposite and could not be left standing.** Round 1
+wrote *"'warning' is lower case — two shouting words would flatten three states
+back into one alarm."* That is now wrong about the code. It is replaced with
+Marc's decision and a one-line record of the earlier argument, so nobody
+re-opens it as though it had never been made — and with what actually separates
+the two loud states now: the **verb**, "are good with" against "need", not the
+case of one word.
+
+The test follows that. [test_reporting_render.py:73](tests/test_reporting_render.py#L73)
+asserted `"WARNING" not in out.subject`, which would now fail for the right
+string; it asserts `"need ATTENTION" not in out.subject` instead.
+
+### Staged break
+
+| break | test that went red |
+|---|---|
+| lower-case the subject again | `test_a_warning_day_reads_as_good_with_a_warning_not_as_attention` — `assert 'are good with a WARNING for Sat, Sep 12th' in 'REPLAY — … are good with a warning for Sat, Sep 12th …'` |
+
+Restored. `114 passed`. `ruff` 16, all in `notebooks/audit.ipynb`. No residue.
+
+## R2.3 Step 2.4 done early, so it ships *with* this deploy
+
+Round 1 found the install records no commit. `deploy_report.sh` now writes one:
+
+| where | what |
+|---|---|
+| [deploy_report.sh:136](infra/deploy_report.sh#L136) | `DEPLOY_COMMIT="$(git rev-parse HEAD …)"`, suffixed `-dirty` when the tree is not clean |
+| [deploy_report.sh:160](infra/deploy_report.sh#L160) | writes it to `/opt/ecowitt/app/VERSION` |
+| [deploy_report.sh:187](infra/deploy_report.sh#L187) | the install line now names the commit |
+
+Written **before** the slow venv build, so a deploy that dies building pandas
+still leaves the truth about which tree is on disk. A dirty tree is marked
+rather than quietly reported as its last commit — the failure mode would
+otherwise be a VERSION file that is confidently wrong.
+
+⚠️ **`bash -n` passed on a version of this that was broken.** The first attempt
+put double quotes inside the already double-quoted `--command="…"`, which would
+have terminated the string early. It still parsed as valid bash, so the syntax
+check said nothing. Caught by rendering the command with a dummy value and
+reading what came out, which is the only check that was actually about the
+thing. Single quotes now; the commit still expands locally before it is sent.
+
+## R2.4 What is committed and waiting
+
+| commit | |
+|---|---|
+| `a87dd3f` | Cowork's round 2 prompt, register, and the CLAUDE.md correction that the email is RUNNING |
+| `976d17a` | WARNING in capitals; the deploy records its commit |
+
+**Not pushed.** Step 3 is gated on steps 1–2 passing, and they cannot.
+
+## R2.5 What unblocks this
+
+The classifier's message names its own remedy: *"the user can add a Bash
+permission rule to their settings."* Two ways, both Marc's:
+
+1. **Allow the deploy, then re-run the round.** A rule in
+   `.claude/settings.json` covering `./infra/deploy_report.sh`.
+2. **Run it himself**, in his own terminal, where no classifier sits in the way.
+   The command reads the five values back from the unit rather than retyping
+   them, which is the part round 1 verified.
+
+Either way the deploy sends **one `--test` email to the test address**, not to
+the household. The household sees the change at 07:00 the next morning — and
+sees the old email if this never runs, because the timer is already on.
+
+---
+
+**Round 2 — Start 2026-09-21 8:49 AM / End 8:53 AM : 03:38**
