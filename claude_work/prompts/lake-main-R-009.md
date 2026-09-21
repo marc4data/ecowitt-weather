@@ -9,9 +9,9 @@ register (CLAUDE.md §14).
 R-002's new household text in the Cowork close. That approval is why this round
 exists; the prompt doesn't ask for it again.
 
-## Blocked until `lake-main-R-010` closes
+## R-010 is closed
 
-R-010 changes the household text, the subject line and the rain headline. Ship them all at once. Paste this prompt only after Cowork has closed R-010.
+Cowork reviewed `caf487d` on 2026-09-21. Marc approved both household texts in that close.
 
 ## What's shipping
 
@@ -19,7 +19,7 @@ R-010 changes the household text, the subject line and the rain headline. Ship t
 |---|---|---|
 | R-001 | `05d95dd` | rain chart as a trailing 24-hour total, titled `Rain in any 24 hours` |
 | R-002 | `38334f1` | no more "rain totals went backwards" on days it only rained |
-| R-010, R-011 + R-002 text | from `lake-main-R-010` | three subject forms; rain headline = largest 24 h in the last day; gauge-state wording |
+| R-010, R-011 + R-002 text | `caf487d` | three subject forms; rain headline = largest 24 h in the last day; gauge-state wording |
 
 Both are reviewed by Cowork (register rows R-001, R-002). Nothing else ships —
 if `git log origin/daily-email..daily-email` shows commits other than the round
