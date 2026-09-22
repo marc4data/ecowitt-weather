@@ -315,3 +315,163 @@ before staging. The staged notebook contains **0** occurrences of either string.
 ---
 
 **Round 2 — Start 2026-09-21 12:36 PM / End 12:44 PM : 07:30**
+
+---
+
+# Round 3 — a box plot under the histogram, and the history scrubbed
+
+**Start 2026-09-21 5:16 PM.** Rounds 1 and 2 above are unchanged.
+
+## R3.1 Step 0 — the ground, and more debris than the prompt knew about
+
+No git process was running. The two files Cowork named were deleted:
+`.git/objects/maintenance.lock` (empty) and `.git/objects/08/tmp_obj_kLsbA9`.
+
+⚠️ **There were seven more**, which the prompt did not know about:
+
+```
+2026-09-21 02:42:02   .git/objects/{97,a2,30}/tmp_obj_*
+2026-09-21 02:45:06   .git/objects/{3c,df,18,de}/tmp_obj_*
+```
+
+Two earlier bridge events at 02:42 and 02:45, not the 14:57 one. Same class of
+debris — orphaned partial object writes — so all seven were removed too, with no
+git process holding them. `git fsck` afterwards reports only dangling blobs
+(unreferenced, expected after a soft reset), no corruption.
+
+Ground confirmed: `origin/daily-email` = `dea5cb4`, local `HEAD` = `ffff0c3`.
+
+## R3.2 🚨 The leak check, red then green
+
+The check reads both values from `.env` and never prints them; only counts appear.
+
+**Before, on the old range `dea5cb4..ffff0c3`:**
+
+```
+matching lines in the diff: 9
+files carrying it in the tree at HEAD: 2
+```
+
+**After the rewrite, on `dea5cb4..HEAD` and at `HEAD`:** see R3.6.
+
+⚠️ **The subtle part, worth writing down.** `git grep` with no commit argument
+searches the **working tree**. Cowork had already scrubbed both files there, so
+a plain `git grep` came back clean while `HEAD` and `11bea41` still carried
+them in 2 files. **Scrubbing a file and committing the fix does not remove it
+from history, and push sends commits, not the working tree.** A clean working
+tree would have been a very convincing wrong answer.
+
+## R3.3 The box plot
+
+Right column split 4:1 — histogram on top, box plot below, so the box takes a
+fifth of the column. The left panel keeps the full height and the 60/40 width
+split is unchanged.
+
+| | |
+|---|---|
+| **p25** | **104 ºF** |
+| **p50** | **106 ºF** |
+| **p75** | **107 ºF** |
+| **IQR** | **3 ºF** |
+| **whiskers** | **102 to 110** (furthest days within 1.5 × IQR; fences 99.5 and 111.5) |
+| **beyond** | **8 days: 92, 95, 99, 99 · 112, 113, 115, 115** |
+
+**Exactly Cowork's expectation, on every figure.**
+
+### Cross-checked by hand against the histogram counts
+
+Not by re-running the same code — from round 2's *published bar counts*,
+independently of the database:
+
+```
+92:1  95:1  99:2  102:1  103:3  104:7  105:5  106:14
+107:4  108:2  109:3  110:1  112:1  113:1  115:2      -> 48 days ✓
+```
+
+numpy's linear method takes index `(n-1)·q = 47q`:
+
+| | index | falls between | value |
+|---|---|---|---|
+| p25 | 11.75 | sorted[11] = 104 and sorted[12] = 104 | **104** |
+| p50 | 23.50 | sorted[23] = 106 and sorted[24] = 106 | **106** |
+| p75 | 35.25 | sorted[35] = 107 and sorted[36] = 107 | **107** |
+
+Every quartile lands inside a run of equal values, so the interpolation never
+has to split a degree — which is why all three are whole numbers, and why the
+"one decimal where it lands between degrees" case never appears here. The
+formatter handles it anyway.
+
+⚠️ **Eight days, six dots.** 99 and 115 each occur twice and overplot exactly.
+The count is in the printed line and in this report; the figure cannot show it,
+and that is worth knowing before someone counts dots and gets 6.
+
+## R3.4 🚨 The alignment check, red then green
+
+The prompt asked for proof that the two right-hand axes really are aligned,
+rather than a claim that `sharex` was passed. The check asserts equal
+`get_xlim()` **and** equal left/right edges from `get_position()`.
+
+**Staged break — `sharex` removed and the box's x-limits nudged by ±2:**
+
+```
+RED: xlim differs: hist (91.0, 116.0) vs box (89.0, 118.0)
+     alignment problems: 1
+```
+
+**The real cell: `alignment problems: 0`** — same limits, same column edges.
+
+## R3.5 The overlap check found 2, and they were mine
+
+Round 2's bounding-box check now covers the new panel. First run:
+
+```
+panel 2: TEXT 'p25 104' overlaps TEXT 'p50 106'
+panel 2: TEXT 'p50 106' overlaps TEXT 'p75 107'
+overlaps found: 2
+```
+
+With a 3 ºF IQR the three labels are wider than the gaps between them. **p50
+now sits on its own level** above the other two. Re-run: **`overlaps found: 0`**
+across all three panels.
+
+### One more thing the run surfaced
+
+`boxplot(vert=False)` printed a `MatplotlibDeprecationWarning` — `vert` is
+deprecated in matplotlib 3.11 and **removed in 3.13**. Switched to
+`orientation='horizontal'`, which this version already supports. A notebook that
+warns today is a notebook that breaks later, and the warning was landing in the
+cell's own output.
+
+## R3.6 The rewrite, and the push
+
+`git reset --soft dea5cb4`, then recommitted from Cowork's scrubbed files.
+Nothing being rewritten had ever been pushed, so no force was needed and none
+was used.
+
+**The checks that gated the push:**
+
+```
+git log -p dea5cb4..HEAD   -> 0
+git grep ... HEAD          -> 0 files
+```
+
+Both empty, the box plot's alignment and overlap checks both green, so
+`git push origin daily-email` ran as a plain fast-forward. `origin/daily-email`
+now equals the new `HEAD`.
+
+The three old commits (`11bea41`, `08709a0`, `ffff0c3`) survive only in the local
+reflog. No ref holding them was pushed.
+
+## R3.7 What I did not do
+
+- Did not force-push, and did not push any ref carrying the old commits.
+- Did not name the town or the station id in any commit message, in this report,
+  or in `.env.example` — the round 2 lesson.
+- Did not deploy; this is a notebook-only change.
+- Left `notebooks/explore.ipynb` out of every commit again.
+- Did not change `src/reporting/` or the shared notebook modules — verified
+  clean after each execution, so the 07:00 email is untouched.
+
+---
+
+**Round 3 — Start 2026-09-21 5:16 PM / End 5:28 PM : 11:22**
