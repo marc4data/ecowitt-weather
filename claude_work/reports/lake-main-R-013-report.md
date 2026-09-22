@@ -155,3 +155,163 @@ markdown differs.
 ---
 
 **Start 2026-09-21 11:50 AM / End 11:59 AM : 08:29**
+
+---
+
+# Round 2 — trimmed, shareable, and **not pushed**
+
+**Start 2026-09-21 12:36 PM.** Round 1 above is unchanged.
+
+## 🛑 R2.0 Read this first: pushing would publish the town and the station id
+
+**The repository is public** — measured, not assumed:
+
+```
+{"nameWithOwner":"marc4data/ecowitt-weather","visibility":"PUBLIC"}
+```
+
+The round's own §"The town and the link stay out of the public repo" is the
+reason this section exists. **But the prompt file and the register both contain
+them**, and Step 0 instructed committing exactly those two files:
+
+| file | what it carries |
+|---|---|
+| `claude_work/prompts/lake-main-R-013.md` | the town on lines 27, 63, 64, 76 · the full station URL, id and all, on 28, 66, 67 |
+| `claude_work/lake_request_register.md` | the town in the R-013 row, quoting Marc |
+
+They are **not on `origin` yet** — both files are clean there, checked. They are
+in local commit `11bea41`, which is Step 0 of this round.
+
+**So `daily-email` was NOT pushed.** Pushing it publishes both to a public
+GitHub repo, where deleting them later does not unpublish them. The prompt says
+to push; the prompt's own content makes pushing the thing it forbids. That is a
+contract that cannot be built as written, so it is reported rather than routed
+around.
+
+**Marc's call, three ways, with a lean:**
+
+1. **Scrub and then push** *(my lean)*. Replace the town and the id with
+   placeholders in the prompt and the register, rewrite `11bea41`, push. The
+   round's artifacts survive; the detail does not. Cowork owns the register, so
+   the edit should be its call rather than mine.
+2. **Make the repo private.** Bigger decision than this round.
+3. **Push as-is**, if the town and a station id are not something he minds being
+   public. He did intend to send the link to friends — but that is not the same
+   as a permanent public record, and `02_DAILY_EMAIL_AS_BUILT` §5.2 already
+   scrubbed location once.
+
+Everything else in the round is done, committed locally, and waiting on that.
+
+## R2.1 The numbers — exactly as the prompt predicted
+
+| | |
+|---|---|
+| **X of Y** | **44 of 48 days ≥ 100 ºF (92%)** |
+| **Start** | **4 August 2026**, computed as the first complete day whose rounded high reached 100 |
+| **End** | 20 September 2026 |
+| **Longest run** | **18 days, 4–21 Aug** — unchanged |
+| SQL cross-check | **agrees: 44 of 48** |
+
+The rule moved from ≥ 101 to **≥ 100** and the count did not change, because no
+day in the record rounds to 100 or 101 — round 1 noted that the boundary never
+bites, and it still does not.
+
+## R2.2 🚨 The staged break: round 1's figure fails the check, by 12
+
+Round 1 said the annotation sat in clear space. It did not, and **saying so by
+eye is what the prompt replaced.** The check compares `get_window_extent()`
+boxes: every text against every bar, and every text against every other text.
+
+**On round 1's committed figure** (rendered from `dea5cb4`'s own cell source):
+
+```
+panel 0: TEXT '44 of 51 days > 100 ºF' overlaps a BAR
+panel 1: TEXT '1\n(2%)' overlaps a BAR          (×8 more)
+panel 1: TEXT '1\n(2%)' overlaps TEXT '1\n(2%)'  (×2 more)
+
+overlaps found: 12
+```
+
+**On round 2's figure: `overlaps found: 0`.**
+
+⚠️ **The most useful part is the eleven I thought I had already fixed.** Round 1
+staggered the histogram labels and I looked at the image and called them
+readable. They *are* readable — and their boxes still overlap the neighbouring
+bars. **Readable and non-overlapping are different properties, and the eye only
+checks the first.** Count-only labels (this round) are narrow enough that the
+question stops arising.
+
+The annotation is now top-right, and the y-limit is raised **before** it is
+placed, so the corner is clear by construction rather than by luck.
+
+## R2.3 Everything Marc listed
+
+| asked | done |
+|---|---|
+| trim to the first 100+ day, feeding both charts | one filtered frame, start computed |
+| histogram at 40% of the row | `width_ratios=[3, 2]` |
+| drop the vertical reference line | gone |
+| remove the (%) from the bars | count only |
+| y-axis integers, ticks/gridlines every 5 | `MultipleLocator(5)` |
+| title `High Temp Distribution Aug 4 to Sept 20, 2026 (48 days)` | computed, with "Sept" for September and normal `%b` elsewhere |
+| indicate the town | figure suptitle, from `LAKEHOUSE_LOCATION_LABEL` |
+| include the link | footer, shortened to `ecowitt.net/home/index?id=…` |
+| annotation top-right, ≥, with % | `44 of 48 days ≥ 100 ºF (92%)` |
+
+## R2.4 🚨 Two bugs the notebook's own run exposed, and one I nearly shipped
+
+**1. I looked at the wrong image.** The prototype rendered from the repo root;
+the notebook kernel's working directory is **`notebooks/`**. So in the notebook
+`.env` was never found and the figure drew **without the town and without the
+link** — the two things this round added — while the PNG landed in
+`notebooks/data/reports/preview/`. Nothing raised. It was caught only because the
+cell prints which pieces it omitted, and that line said "drawn without it" for
+both.
+
+Paths now anchor on `Path(nb.__file__).resolve().parent.parent`, which is
+independent of cwd. Re-run from the notebook: town and link present, PNG at the
+repo-root path, verified by timestamp and by opening it.
+
+**2. `load_dotenv()` raised under `exec`.** `find_dotenv()` walks the call stack
+and asserts on a missing caller frame. Passing an explicit path removes the
+stack walk entirely.
+
+**3. Ten unicode escapes were doubled.** Writing the cell through a shell
+heredoc turned `\uXXXX` into a literal backslash sequence, so the first run
+printed `44 of 48 days \u2265 100 \u00baF` — as text, in the output. Caught by
+reading the output rather than the code.
+
+## R2.5 The public-repo checks, run as instructed
+
+```
+=== the required grep of the STAGED diff ===
+(empty — neither the station id nor the town appears in the staged diff)
+```
+
+**It was not empty the first time.** It caught **the town, in a comment I had
+just written into `.env.example`** — I used the real one as the example value
+for the new key. In the file whose whole purpose is to hold no real values. Now
+`'Somewhere, ST'`.
+
+`.env` is gitignored (`.gitignore:2`), carries the real `LAKEHOUSE_LOCATION_LABEL`,
+and is untracked. `.env.example` carries the key **empty**, beside the station
+URL, documented.
+
+**Cell outputs: stripped, not cleared-then-executed.** The notebook was executed
+in full so every other cell keeps its outputs (20 of 39, matching how the repo
+stores it), then `c91`'s two outputs and its `execution_count` were removed
+before staging. The staged notebook contains **0** occurrences of either string.
+
+## R2.6 What I did not do
+
+- **Did not push** — R2.0.
+- Did not edit the prompt or the register to scrub them: Cowork owns the
+  register, and silently rewriting a round's own prompt would hide the finding.
+- Did not change `src/reporting/` or the shared notebook modules; `git status`
+  on them is clean, so the 07:00 email is untouched.
+- Left `notebooks/explore.ipynb` out of every commit again.
+- Removed the stray `notebooks/data/` the first run created.
+
+---
+
+**Round 2 — Start 2026-09-21 12:36 PM / End 12:44 PM : 07:30**
